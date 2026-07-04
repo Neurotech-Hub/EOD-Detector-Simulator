@@ -1,0 +1,32 @@
+* Stage bench template — copy and customize
+* Stage: NN_short_name
+
+.include "../../models/ina333_ideal.sub"
+
+.param RGVAL=1.0101k
+.param VCM=2.5
+
+Vsupply VDD 0 5
+Vref REF 0 {VCM}
+
+* --- Your front-end passives / network go here ---
+
+Ain %v[in_p in_n] diff_src
+.model diff_src filesource (
++ file="input_diff.txt"
++ amploffset=[0 0]
++ amplscale=[1 1]
++ timeoffset=0
++ timescale=1
++ timerelative=false
++ amplstep=false
++ )
+
+Rgain RGp RGn {RGVAL}
+XU1 in_p in_n RGp RGn out REF VDD 0 INA333_IDEAL RGGAIN={RGVAL}
+Rload out REF 1Meg
+
+.tran 10u 100m
+.save v(in_p) v(in_n) v(out) v(ref)
+
+.end

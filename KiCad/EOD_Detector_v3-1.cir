@@ -1,0 +1,25 @@
+.title KiCad schematic
+R7 Net-_C3-Pad2_ INA- 100k
+C2 ELEC_A Net-_C2-Pad2_ 4.7n
+R4 Net-_C2-Pad2_ INA+ 100k
+C3 ELEC_B Net-_C3-Pad2_ 4.7n
+R1 +3.3V Net-_U1-+_ 1Meg
+R10 VREF Net-_U1--_ 22
+C20 GND VREF 100n
+U1 __U1
+C19 GND Net-_U1-+_ 100n
+R2 Net-_U1-+_ GND 1Meg
+R5 COMP_IN TRIGGER 1Meg
+C5 VREF ELEC_OUT 2.2n
+R9 ELEC_OUT COMP_IN 4.7k
+U3 __U3
+R17 VREF THRESH 330
+R13 THRESH +3.3V 5.1k
+RV1 __RV1
+C4 INA- INA+ 330p
+R6 VREF INA+ 10Meg
+U6 __U6
+R3 Net-_R3-Pad1_ Net-_R3-Pad2_ 100k
+R15 INA+ INA- 1Meg
+R8 VREF INA- 10Meg
+.end

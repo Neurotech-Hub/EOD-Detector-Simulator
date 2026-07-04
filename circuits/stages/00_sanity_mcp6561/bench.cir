@@ -1,0 +1,26 @@
+* MCP6561 comparator sanity bench — input step across threshold
+* Stage: 00_sanity_mcp6561
+*
+* ngspice quirk: this vendor model requires VDD on top-level node "3"
+
+.include "../../models/mcp6561.lib"
+
+.options gmin=100f
+
+.param VDD=5
+.param VREF=2.5
+
+Vsupply 3 0 {VDD}
+Vref in_n 0 {VREF}
+
+* Step IN+ from 1 V (below Vref) to 3 V (above Vref) at 1 ms
+Vin in_p 0 PWL(0 1.0 1m 1.0 1.001m 3.0 5m 3.0)
+
+* MCP6561 pins: IN+ IN- VDD VSS OUT
+XU1 in_p in_n 3 0 out MCP6561
+Rload out 0 10k
+
+.tran 1u 5m
+.save v(in_p) v(in_n) v(out)
+
+.end

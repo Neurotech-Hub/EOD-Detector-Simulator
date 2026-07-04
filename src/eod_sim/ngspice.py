@@ -3,23 +3,12 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Literal
 
-ModelType = Literal["ideal", "ti"]
-
-_MODEL_CONFIG: dict[ModelType, dict[str, str]] = {
-    "ideal": {
-        "bench": "ina333_bench.cir",
-        "include": "models/ina333_ideal.sub",
-    },
-    "ti": {
-        "bench": "ina333_bench_ti.cir",
-        "include": "models/ina333_ti.lib",
-    },
-}
+from eod_sim.stages.registry import Stage
 
 
 class NgspiceNotFoundError(RuntimeError):
@@ -92,41 +81,40 @@ def run_batch(
     return result
 
 
-def bench_template_path(circuits_dir: Path, model: ModelType) -> Path:
-    """Return the bench netlist template for the selected model."""
-    return circuits_dir / _MODEL_CONFIG[model]["bench"]
-
-
-def patch_netlist_rg(content: str, rg_value: str) -> str:
-    """Return netlist content with updated RGVAL parameter."""
+def patch_netlist_params(content: str, params: dict[str, str]) -> str:
+    """Return netlist content with updated .param values."""
     lines = []
     for line in content.splitlines():
-        if line.strip().startswith(".param RGVAL="):
-            lines.append(f".param RGVAL={rg_value}")
-        else:
-            lines.append(line)
+        updated = line
+        for name, value in params.items():
+            if line.strip().startswith(f".param {name}="):
+                updated = f".param {name}={value}"
+                break
+        lines.append(updated)
     return "\n".join(lines) + "\n"
 
 
 def patch_netlist_for_output_dir(
     content: str,
-    project_root: Path,
+    stage_dir: Path,
     output_dir: Path,
-    model: ModelType,
 ) -> str:
-    """Rewrite include and waveform file paths for a netlist run from output_dir."""
-    circuits_dir = project_root / "circuits"
-    include_rel = _MODEL_CONFIG[model]["include"]
-    rel_include = Path(os.path.relpath(circuits_dir / include_rel, output_dir))
-    rel_diff = Path(os.path.relpath(output_dir / "input_diff.txt", output_dir))
+    """Rewrite .include and waveform file paths for a netlist run from output_dir."""
 
-    content = content.replace(
-        f'.include "{include_rel}"',
-        f'.include "{rel_include.as_posix()}"',
-    )
-    content = content.replace(
-        'file="../outputs/input_diff.txt"',
-        f'file="{rel_diff.as_posix()}"',
+    def replace_include(match: re.Match[str]) -> str:
+        rel_include = match.group(1)
+        abs_path = (stage_dir / rel_include).resolve()
+        patched = Path(os.path.relpath(abs_path, output_dir)).as_posix()
+        return f'.include "{patched}"'
+
+    content = re.sub(r'\.include\s+"([^"]+)"', replace_include, content)
+
+    wave_path = output_dir / "input_diff.txt"
+    wave_rel = Path(os.path.relpath(wave_path, output_dir)).as_posix()
+    content = re.sub(
+        r'file="[^"]*input_diff\.txt"',
+        f'file="{wave_rel}"',
+        content,
     )
     return content
 
@@ -134,14 +122,19 @@ def patch_netlist_for_output_dir(
 def write_patched_netlist(
     template_path: Path,
     output_path: Path,
-    rg_value: str,
-    project_root: Path | None = None,
-    model: ModelType = "ideal",
+    stage: Stage,
+    params: dict[str, str] | None = None,
 ) -> Path:
-    """Write a netlist copy with the RGVAL parameter and paths updated."""
+    """Write a netlist copy with parameters and paths updated for batch run."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    content = patch_netlist_rg(template_path.read_text(), rg_value)
-    if project_root is not None:
-        content = patch_netlist_for_output_dir(content, project_root, output_path.parent, model)
+    content = template_path.read_text()
+    if params:
+        content = patch_netlist_params(content, params)
+    content = patch_netlist_for_output_dir(content, template_path.parent, output_path.parent)
     output_path.write_text(content)
     return output_path
+
+
+def bench_template_path(circuits_dir: Path, stage: Stage, bench_variant: str) -> Path:
+    """Return the bench netlist template for a stage and bench variant."""
+    return stage.bench_path(circuits_dir, bench_variant)

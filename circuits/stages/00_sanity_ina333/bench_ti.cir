@@ -1,7 +1,7 @@
-* INA333 test bench — EOD differential pulse input
-* Python writes outputs/input_diff.txt (time, V+, V- columns)
+* INA333 sanity bench (TI macromodel) — EOD differential pulse input
+* Stage: 00_sanity_ina333
 
-.include "models/ina333_ideal.sub"
+.include "../../models/ina333_ti.lib"
 
 .param RGVAL=1.0101k
 .param VCM=2.5
@@ -13,7 +13,7 @@ Vref REF 0 {VCM}
 * Differential input from Python-generated waveform file (filesource XSPICE)
 Ain %v[in_p in_n] diff_src
 .model diff_src filesource (
-+ file="../outputs/input_diff.txt"
++ file="input_diff.txt"
 + amploffset=[0 0]
 + amplscale=[1 1]
 + timeoffset=0
@@ -22,17 +22,19 @@ Ain %v[in_p in_n] diff_src
 + amplstep=false
 + )
 
-* Gain-setting resistor between RG pins
+* Gain-setting resistor between RG pins (TI pin names RG+ RG-)
 Rgain RGp RGn {RGVAL}
 
-* INA333 instance (RG parameter passed for gain calculation)
-XU1 in_p in_n RGp RGn out REF VDD 0 INA333_IDEAL RGGAIN={RGVAL}
+* TI INA333: IN+ IN- VCC VEE OUT REF RG+ RG-
+XU1 in_p in_n VDD 0 out REF RGp RGn INA333
 
 * High-impedance load on output
 Rload out REF 1Meg
 
-* Transient analysis — 100 ms, 10 us step
-.tran 10u 100m
+* Transient analysis — match Python sample_us via TSTEP
+.param TSTEP=10u
+.param TSTOP=100m
+.tran {TSTEP} {TSTOP}
 
 * Save probe nodes for Python parsing
 .save v(in_p) v(in_n) v(out) v(ref)

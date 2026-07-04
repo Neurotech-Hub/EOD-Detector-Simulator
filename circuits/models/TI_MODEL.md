@@ -37,7 +37,7 @@ See the header comment in `ina333_ti.lib` for details.
 
 TI subcircuit: `INA333 IN+ IN- VCC VEE OUT REF RG+ RG-`
 
-Bench instance in [`ina333_bench_ti.cir`](../ina333_bench_ti.cir):
+Bench instance in [`circuits/stages/00_sanity_ina333/bench_ti.cir`](../stages/00_sanity_ina333/bench_ti.cir):
 
 ```spice
 XU1 in_p in_n VDD 0 out REF RGp RGn INA333

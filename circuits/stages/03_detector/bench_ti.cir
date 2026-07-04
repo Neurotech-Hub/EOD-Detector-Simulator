@@ -1,0 +1,27 @@
+* Stage 03 — full detector (TI INA333 + MCP6561)
+* Stage: 03_detector
+
+.include "../includes/power.inc"
+.include "../includes/eod_passives.inc"
+.include "../includes/eod_stimulus.inc"
+.include "../includes/eod_ina333_ti.inc"
+.include "../includes/eod_output_filter.inc"
+.include "../includes/eod_comparator_ti.inc"
+.include "../includes/sim_ti_transient.inc"
+
+.param VDD=3.3
+.param VREF=1.65
+.param VTHRESH=1.85
+.param C_COUPLE=4.7n
+.param R_SERIES=100k
+.param R_VREF=10Meg
+.param R_DIFF=1Meg
+.param C_DIFF=330p
+.param RGVAL=100k
+.param TSTEP=1u
+.param TSTOP=100m
+
+.tran {TSTEP} {TSTOP} 0 {TMAX}
+.save v(elec_a) v(elec_b) v(ina_p) v(ina_n) v(elec_out) v(comp_in) v(comp_out) v(trigger) v(thresh) v(vref)
+
+.end
