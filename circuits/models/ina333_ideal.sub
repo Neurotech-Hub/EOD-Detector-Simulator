@@ -1,0 +1,20 @@
+* Ideal 3-op-amp instrumentation amplifier
+* Gain: G = 1 + 100k/RGGAIN (INA333 datasheet)
+* Pins: IN+ IN- RGP RGN OUT REF V+ V-
+* Parameter RGGAIN: external gain-setting resistor value (ohms)
+*
+.subckt INA333_IDEAL IN+ IN- RGP RGN OUT REF V+ V- PARAMS: RGGAIN=1k
+
+* Input buffer A1: RGN tracks IN+
+E_A1 RGN 0 IN+ A1_NEG 1e6
+R_A1FB A1_NEG RGN 1
+
+* Input buffer A2: RGP tracks IN-
+E_A2 RGP 0 IN- A2_NEG 1e6
+R_A2FB A2_NEG RGP 1
+
+* Output differential amplifier
+* V(OUT) - V(REF) = (1 + 100k/RGGAIN) * (V(RGN) - V(RGP))
+B_OUT OUT REF V={(1+100000/RGGAIN)*(V(RGN)-V(RGP))}
+
+.ends INA333_IDEAL

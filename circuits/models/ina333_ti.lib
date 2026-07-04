@@ -1,0 +1,550 @@
+* INA333 TI macromodel (Rev 1.2) — ngspice-patched for this project
+* Patches vs vendor INA333.LIB:
+*   - VOS drift: fixed at DC (temp=27 C); TEMP expressions removed
+*   - IF() -> ternary ? : operator
+*   - VSWITCH -> ngspice SW (Vt/Vh from VON/VOFF)
+* Source: Texas Instruments SBOM310E / INA333.LIB (Feb 2019)
+*$
+* INA333
+*************************************************************************************************
+* (C) Copyright 2019 Texas Instruments Incorporated. All rights reserved.                                            
+*************************************************************************************************
+** This model is designed as an aid for customers of Texas Instruments.
+** TI and its licensor's and suppliers make no warranties, either expressed
+** or implied, with respect to this model, including the warranties of 
+** merchantability or fitness for a particular purpose.  The model is
+** provided solely on an "as is" basis.  The entire risk as to its quality
+** and performance is with the customer
+*************************************************************************************************
+*
+* This model is subject to change without notice. Texas Instruments
+* Incorporated is not responsible for updating this model.
+*
+*************************************************************************************************
+*
+** Released by: Online Design Tools, Texas Instruments Inc.
+* Part: INA333
+* Date: 06FEB2019
+* Model Type: Generic (suitable for all analysis types)
+* EVM Order Number: N/A 
+* EVM Users Guide:  N/A 
+* Datasheet: SBOS445C -JULY 2008-REVISED DECEMBER 2015
+* Created with Green-Williams-Lis Op Amp Macro-model Architecture
+*
+* Model Version: Final 1.2
+*
+*****************************************************************************
+*
+* Updates:
+*
+* Final 1.2
+* Updated with unique subckt name,Current Noise, Voltage Noise and edits in claw block
+*
+*
+* Final 1.1 
+* Release to Web.
+*
+****************************************************************************
+* Model Usage Notes:
+* 1. The following parameters are modeled: 
+* 		OPEN-LOOP GAIN AND PHASE VS. FREQUENCY  WITH RL, CL EFFECTS (Aol)
+* 		UNITY GAIN BANDWIDTH (GBW)
+* 		INPUT COMMON-MODE REJECTION RATIO VS. FREQUENCY (CMRR)
+* 		POWER SUPPLY REJECTION RATIO VS. FREQUENCY (PSRR)
+* 		DIFFERENTIAL INPUT IMPEDANCE (Zid)
+* 		COMMON-MODE INPUT IMPEDANCE (Zic)
+* 		OPEN-LOOP OUTPUT IMPEDANCE VS. FREQUENCY (Zo)
+* 		OUTPUT CURRENT THROUGH THE SUPPLY (Iout)
+* 		INPUT VOLTAGE NOISE DENSITY VS. FREQUENCY (en)
+* 		INPUT CURRENT NOISE DENSITY VS. FREQUENCY (in)
+* 		OUTPUT VOLTAGE SWING vs. OUTPUT CURRENT (Vo)
+* 		SHORT-CIRCUIT OUTPUT CURRENT (Isc)
+* 		QUIESCENT CURRENT (Iq)
+* 		SETTLING TIME VS. CAPACITIVE LOAD (ts)
+* 		SLEW RATE (SR)
+* 		SMALL SIGNAL OVERSHOOT VS. CAPACITIVE LOAD
+* 		LARGE SIGNAL RESPONSE
+* 		OVERLOAD RECOVERY TIME (tor)
+* 		INPUT BIAS CURRENT (Ib)
+* 		INPUT OFFSET CURRENT (Ios)
+* 		INPUT OFFSET VOLTAGE (Vos)
+* 		INPUT OFFSET VOLTAGE VS. TEMPERATURE (VOS DRIFT)
+* 		INPUT COMMON-MODE VOLTAGE RANGE (Vcm)
+* 		INPUT OFFSET VOLTAGE VS. INPUT COMMON-MODE VOLTAGE (Vos vs. Vcm)
+* 		INPUT/OUTPUT ESD CELLS (ESDin, ESDout)
+******************************************************
+.subckt INA333 IN+ IN- VCC VEE OUT REF RG+ RG-
+******************************************************
+.model R_NOISELESS RES( TCE=0 T_ABS=-273.15)
+******************************************************
+I_B2        IN+ MID 70P
+I_OS2       RG+ MID -70P
+I_OS1       RG- MID -70P
+I_B1        IN- MID 20P
+XV_OS2       IN+_10 IN+ VOS_DRIFT2_INA333_INA333
+XV_OS1       IN+_12 IN- VOS_DRIFT1_INA333_INA333
+I_Q         VCC VEE 50U
+XA2         IN+_10 RG+ VCC VEE OUT_11 MID IN_AMP_INA333
+E1          MID 0 13 0  1
+R89         14 0 R_NOISELESS 1 
+R9          15 14 R_NOISELESS 1M 
+C7          15 0  1F
+R60         13 15 R_NOISELESS 1MEG 
+C6          13 0  1 
+R8          13 0 R_NOISELESS 1T 
+R59         16 13 R_NOISELESS 1MEG 
+C5          16 0  1F 
+R7          17 16 R_NOISELESS 1M 
+R88         17 0 R_NOISELESS 1 
+G17         14 0 VEE 0  -1
+G16         17 0 VCC 0  -1
+C_CMn       MID IN-  3P
+C_CMp       IN+ MID  3P
+C_DIFF      IN- IN+  3P
+C1          RG- OUT_18  3.5P
+C2          RG+ OUT_11  3.5P
+C3          OUT IN-_19  1P
+C4          REF IN+_20  1F
+XA1         IN+_12 RG- VCC VEE OUT_18 MID IN_AMP_INA333
+XA3         IN+_20 IN-_19 VCC VEE OUT MID OUT_AMP_INA333
+R6          IN+_20 REF R_NOISELESS 150.0095K 
+R5          OUT_11 IN+_20 R_NOISELESS 150K 
+R4          IN-_19 OUT R_NOISELESS 150K 
+R3          OUT_18 IN-_19 R_NOISELESS 150K 
+R2          RG+ OUT_11 R_NOISELESS 50K 
+R1          RG- OUT_18 R_NOISELESS 50K 
+.ends INA333
+*
+.subckt IN_AMP_INA333 IN+ IN- VCC VEE OUT MID
+.model R_NOISELESS RES( TCE=0 T_ABS=-273.15)
+.model S_VSWITCH_1 SW (Ron=1Meg Roff=1G Vt=850m Vh=100m)
+VCLAWn      36 IN_33 30M
+VCLAWp      37 IN_32 -30M
+V4          ZO_OUT_40 OUT 0
+V_GRp       50 MID 48
+V_GRn       51 MID -69
+VCM_MIN     61 IN_33 -100M
+VCM_MAX     62 IN_32 100M
+R4          ESD_INA333n_30 34 R_NOISELESS 9.15475K 
+C2          34 MID  2P 
+C1          MID 35  2P 
+R3          ESD_INA333p_31 35 9.15475K 
+XU1 ZO_CLEFT_38 CL_CLAMP_25 ZO_CRIGHT_39 MID ZO_OUT_40 AOL_INN_41 AOL_INP_42 
++ CLAMP_28 CLAW_CLAMP_26 VSENSE_27 AOL_ZO_INA333 
+XU5         VEE VCC ESD_INA333n_30 ESD_INA333p_31 ESD_INA333
+H1          43 MID V4 1K
+R11         MID 44 R_NOISELESS 1T 
+R18         44 VOUT_S_23 R_NOISELESS 100 
+C7          VOUT_S_23 MID  1N 
+E5          44 MID OUT MID  1
+C13         VIMON_24 MID  1N 
+R33         43 VIMON_24 R_NOISELESS 100 
+R10         MID 43 R_NOISELESS 1T 
+S1          ZO_CLEFT_38 ZO_CRIGHT_39 SW_OL_29 MID S_VSWITCH_1
+XU3         OUT_45 IN_33 MID PSRR_CMRR_0_INA333
+XU2         OUT_46 IN_32 MID PSRR_CMRR_1_INA333
+C28         47 MID  1P 
+R77         CLAWp_22 47 R_NOISELESS 100 
+C27         48 MID  1P 
+R76         CLAWn_21 48 R_NOISELESS 100 
+Xi_nn       34 MID FEMT_INA333
+Xi_np       MID 49 FEMT_INA333
+Xe_n        35 49 VNSE_INA333
+XIQPos      VIMON_24 MID MID VCC VCCS_LIM_IQ_INA333
+XIQNeg      MID VIMON_24 VEE MID VCCS_LIM_IQ_INA333
+XGR_AMP     50 51 52 MID 53 54 CLAMP_AMP_HI_INA333
+R39         50 MID R_NOISELESS 1T 
+R37         51 MID R_NOISELESS 1T 
+R42         VSENSE_27 52 R_NOISELESS 1M 
+C19         52 MID  1F 
+R38         53 MID R_NOISELESS 1 
+R36         MID 54 R_NOISELESS 1 
+R40         53 55 R_NOISELESS 1M 
+R41         54 56 R_NOISELESS 1M 
+C17         55 MID  1F 
+C18         MID 56  1F 
+XGR_SRC     55 56 CLAMP_28 MID VCCS_LIM_GR_INA333
+XCLAW_AMP   37 36 VOUT_S_23 MID 57 58 CLAMP_AMP_LO_INA333
+R26         37 MID R_NOISELESS 1T 
+R23         36 MID R_NOISELESS 1T 
+R25         57 MID R_NOISELESS 1 
+R24         MID 58 R_NOISELESS 1 
+R27         57 CLAWp_22 R_NOISELESS 1M 
+R28         58 CLAWn_21 R_NOISELESS 1M 
+C11         CLAWp_22 MID  1F 
+C10         MID CLAWn_21  1F 
+XCLAW_SRC   CLAWp_22 CLAWn_21 CLAW_CLAMP_26 MID VCCS_LIM_3_INA333
+C12         SW_OL_29 MID  100P 
+R32         59 SW_OL_29 R_NOISELESS 100 
+R31         59 MID R_NOISELESS 1 
+XOL_SENSE_INA333   MID 59 48 47 OL_SENSE_INA333
+C4          AOL_INP_42 MID  1F 
+R9          AOL_INP_42 60 R_NOISELESS 1M 
+R7          MID 61 R_NOISELESS 1T 
+R6          62 MID R_NOISELESS 1T 
+R8          MID 60 R_NOISELESS 1 
+XVCM_CLAMP  63 MID 60 MID 62 61 VCCS_EXT_LIM_INA333
+R89         IN_33 0 R_NOISELESS 1 
+R88         IN_32 0 R_NOISELESS 1 
+G17         IN_33 0 VEE 0  -1
+G16         IN_32 0 VCC 0  -1
+R_PSR       64 63 R_NOISELESS 1K 
+G_PSR       63 64 OUT_46 OUT_45  -1M
+R2          AOL_INN_41 34 R_NOISELESS 1M 
+R1          64 49 R_NOISELESS 1M 
+R53         ESD_INA333n_30 MID R_NOISELESS 1T 
+R52         MID ESD_INA333p_31 R_NOISELESS 1T 
+R35         IN- ESD_INA333n_30 R_NOISELESS 10M 
+R34         IN+ ESD_INA333p_31 R_NOISELESS 10M 
+.ends
+*
+.subckt OUT_AMP_INA333 IN+ IN- VCC VEE OUT MID
+.model R_NOISELESS RES( TCE=0 T_ABS=-273.15)
+.model S_VSWITCH_1 SW (Ron=50 Roff=1T Vt=475m Vh=50m)
+.model S_VSWITCH_2 SW (Ron=1Meg Roff=1G Vt=850m Vh=100m)
+.model S_VSWITCH_3 SW (Ron=10Meg Roff=1G Vt=5m Vh=10m)
+V4          ZO_OUT_203 OUT 0
+I_OS        ESD_INA333n_197 MID -70P
+I_B         211 MID 70P
+V_GRp       226 MID 48
+V_GRn       227 MID -69
+V_ISCp      220 MID 5
+V_ISCn      221 MID -11
+V_ORn       219 VCLP -7.99
+V11         225 218 0
+V_ORp       217 VCLP 7.99
+V12         224 216 0
+VCM_MIN     245 IN_187 -100M
+VCM_MAX     246 IN_188 100M
+XV_OS        249 211 VOS_DRIFT_INA333
+R89         IN_187 0 R_NOISELESS 1 
+R88         IN_188 0 R_NOISELESS 1 
+G17         IN_187 0 VEE 0  -1
+G16         IN_188 0 VCC 0  -1
+XU1 ZO_CLEFT_201 CL_CLAMP_189 ZO_CRIGHT_202 MID ZO_OUT_203 AOL_INN_204 
++ AOL_INP_205 CLAMP_195 CLAW_CLAMP_193 VSENSE_194 AOL_ZO_INA333 
+XU5         VEE VCC ESD_INA333n_197 ESD_INA333p_198 ESD_INA333
+R47         206 VCLP R_NOISELESS 100 
+C24         VCLP MID  100P 
+E4          206 MID CL_CLAMP_189 MID  1
+H1          207 MID V4 1K
+S7          VEE OUT VEE OUT S_VSWITCH_1
+S6          OUT VCC OUT VCC S_VSWITCH_1
+R11         MID 208 R_NOISELESS 1T 
+R18         208 VOUT_S_191 R_NOISELESS 100 
+C7          VOUT_S_191 MID  1N 
+E5          208 MID OUT MID  1
+C13         VIMON_192 MID  1N 
+R33         207 VIMON_192 R_NOISELESS 100 
+R10         MID 207 R_NOISELESS 1T 
+S1          ZO_CLEFT_201 ZO_CRIGHT_202 SW_OL_196 MID S_VSWITCH_2
+XU3         OUT_209 IN_187 MID PSRR_CMRR_0_INA333
+XU2         OUT_210 IN_188 MID PSRR_CMRR_1_INA333
+C28         212 MID  1P 
+R77         213 212 R_NOISELESS 100 
+C27         214 MID  1P 
+R76         215 214 R_NOISELESS 100 
+R75         MID 216 R_NOISELESS 1 
+GVCCS8      216 MID 217 MID  -1
+R74         218 MID R_NOISELESS 1 
+GVCCS7      218 MID 219 MID  -1
+Xi_nn       ESD_INA333n_197 MID FEMT_INA333
+Xi_np       MID 211 FEMT_INA333
+Xe_n        ESD_INA333p_198 211 VNSE_INA333
+XIQPos      VIMON_192 MID MID VCC VCCS_LIM_IQ_INA333
+XIQNeg      MID VIMON_192 VEE MID VCCS_LIM_IQ_INA333
+C_DIFF      ESD_INA333p_198 ESD_INA333n_197  2P 
+XCL_AMP     220 221 VIMON_192 MID 222 223 CLAMP_AMP_LO_INA333
+SOR_SWp     CLAMP_195 224 CLAMP_195 224 S_VSWITCH_3
+SOR_SWn     225 CLAMP_195 225 CLAMP_195 S_VSWITCH_3
+XGR_AMP     226 227 228 MID 229 230 CLAMP_AMP_HI_INA333
+R39         226 MID R_NOISELESS 1T 
+R37         227 MID R_NOISELESS 1T 
+R42         VSENSE_194 228 R_NOISELESS 1M 
+C19         228 MID  1F 
+R38         229 MID R_NOISELESS 1 
+R36         MID 230 R_NOISELESS 1 
+R40         229 231 R_NOISELESS 1M 
+R41         230 232 R_NOISELESS 1M 
+C17         231 MID  1F 
+C18         MID 232  1F 
+XGR_SRC     231 232 CLAMP_195 MID VCCS_LIM_GR_INA333
+R21         222 MID R_NOISELESS 1 
+R20         MID 223 R_NOISELESS 1 
+R29         222 233 R_NOISELESS 1M 
+R30         223 234 R_NOISELESS 1M 
+C9          233 MID  1F 
+C8          MID 234  1F 
+XCL_SRC     233 234 CL_CLAMP_189 MID VCCS_LIM_4_INA333
+R22         220 MID R_NOISELESS 1T 
+R19         MID 221 R_NOISELESS 1T 
+XCLAWp      VIMON_192 MID 235 IN_188 VCCS_LIM_CLAWp_INA333
+XCLAWn      MID VIMON_192 IN_187 236 VCCS_LIM_CLAWn_INA333
+R12         235 IN_188 R_NOISELESS 1K 
+R16         235 237 R_NOISELESS 1M 
+R13         IN_187 236 R_NOISELESS 1K 
+R17         238 236 R_NOISELESS 1M 
+C6          238 MID  1F 
+C5          MID 237  1F 
+G2          VCC_CLP MID 237 MID  -1M
+R15         VCC_CLP MID R_NOISELESS 1K 
+G3          VEE_CLP MID 238 MID  -1M
+R14         MID VEE_CLP R_NOISELESS 1K 
+XCLAW_AMP   VCC_CLP VEE_CLP VOUT_S_191 MID 239 240 CLAMP_AMP_LO_INA333
+R26         VCC_CLP MID R_NOISELESS 1T 
+R23         VEE_CLP MID R_NOISELESS 1T 
+R25         239 MID R_NOISELESS 1 
+R24         MID 240 R_NOISELESS 1 
+R27         239 241 R_NOISELESS 1M 
+R28         240 242 R_NOISELESS 1M 
+C11         241 MID  1F 
+C10         MID 242  1F 
+XCLAW_SRC   241 242 CLAW_CLAMP_193 MID VCCS_LIM_3_INA333
+H2          215 MID V11 -1
+H3          213 MID V12 1
+C12         SW_OL_196 MID  100P 
+R32         243 SW_OL_196 R_NOISELESS 100 
+R31         243 MID R_NOISELESS 1 
+XOL_SENSE_INA333   MID 243 214 212 OL_SENSE_INA333
+C4          AOL_INP_205 MID  1F 
+R9          AOL_INP_205 244 R_NOISELESS 1M 
+R7          MID 245 R_NOISELESS 1T 
+R6          246 MID R_NOISELESS 1T 
+R8          MID 244 R_NOISELESS 1 
+XVCM_CLAMP  247 MID 244 MID 246 245 VCCS_EXT_LIM_INA333
+R_PSR       248 247 R_NOISELESS 1K 
+G_PSR       247 248 OUT_210 OUT_209  -1M
+R2          AOL_INN_204 ESD_INA333n_197 R_NOISELESS 1M 
+R1          248 249 R_NOISELESS 1M 
+C_CMn       ESD_INA333n_197 MID  4P 
+C_CMp       MID ESD_INA333p_198  4P 
+R53         ESD_INA333n_197 MID R_NOISELESS 1T 
+R52         MID ESD_INA333p_198 R_NOISELESS 1T 
+R35         IN- ESD_INA333n_197 R_NOISELESS 10M 
+R34         IN+ ESD_INA333p_198 R_NOISELESS 10M 
+.ends
+*
+.subckt AOL_ZO_INA333 ZO_CLEFT CL_CLAMP ZO_CRIGHT MID ZO_OUT AOL_INN AOL_INP CLAMP CLAW_CLAMP VSENSE
+.model R_NOISELESS RES( TCE=0 T_ABS=-273.15) 
+C4_5        67 68  1.45P 
+R11_5       68 MID R_NOISELESS 126.68M 
+R10_5       68 67 R_NOISELESS 10K 
+R1_5        67 MID R_NOISELESS 1 
+GVCCS2_4    67 MID 69 MID  -1
+C2_4        70 MID  16.75P 
+R5_4        69 70 R_NOISELESS 10K 
+R4_4        69 71 R_NOISELESS 9.04K 
+R7_4        71 MID R_NOISELESS 1 
+GVCCS1_3    71 MID 72 MID  -1.31
+R2_3        72 MID R_NOISELESS 32.79K 
+C1_3        72 73  80.5P 
+R1_3        72 73 R_NOISELESS 10K 
+Rdc_3       73 MID R_NOISELESS 1 
+GVCCS2_2    73 MID 74 MID  -1
+C2_2        75 MID  800.62P 
+R5_2        74 75 R_NOISELESS 10K 
+R4_2        74 76 R_NOISELESS 3.2MEG 
+R7_2        76 MID R_NOISELESS 1 
+R9_5        77 MID R_NOISELESS 1 
+XVCVS_LIM_1 68 MID MID 77 VCCS_LIM_ZO_INA333
+C2_A2       out2_65 MID  212.46F 
+R3_A2       MID out2_65 R_NOISELESS 1MEG 
+GVCCS3_A2   out2_65 MID VSENSE MID  -1U
+C1_A0       CLAMP MID  1.09U 
+R4_A0       MID CLAMP R_NOISELESS 1MEG 
+XVCCS_LIM_2_INA333_A0 4_A0_66 MID MID CLAMP VCCS_LIM_2_INA333
+R3_A0       MID 4_A0_66 R_NOISELESS 1MEG 
+XVCCS_LIM_1_INA333_A0 AOL_INP AOL_INN MID 4_A0_66 VCCS_LIM_1_INA333
+GVCCS1_1    76 MID ZO_CRIGHT MID  -112.04
+C1_1        ZO_CLEFT ZO_CRIGHT  89.93U 
+R2_1        ZO_CRIGHT MID R_NOISELESS 90.06 
+R1_1        ZO_CRIGHT ZO_CLEFT R_NOISELESS 10K 
+Rdummy      MID ZO_OUT R_NOISELESS 38.34K 
+Rx          ZO_OUT 77 R_NOISELESS 383.39K 
+Rdc_1       ZO_CLEFT MID R_NOISELESS 1 
+G_Aol_Zo    ZO_CLEFT MID CL_CLAMP ZO_OUT  -373.52
+R4_CL       MID CL_CLAMP R_NOISELESS 1K 
+GVCCS4_CL   CL_CLAMP MID CLAW_CLAMP MID  -1M
+R4_CC       MID CLAW_CLAMP R_NOISELESS 1K 
+GVCCS4_CC   CLAW_CLAMP MID out2_65 MID  -1M
+R4_VS       MID VSENSE R_NOISELESS 1K 
+GVCCS4_VS   VSENSE MID CLAMP MID  -1M
+.ends
+*
+.subckt PSRR_CMRR_0_INA333 OUT IN MID
+.model R_NOISELESS RES( TCE=0 T_ABS=-273.15)
+G_2         OUT MID 78 MID  -7
+R74         MID OUT R_NOISELESS 1 
+R2a         MID 79 R_NOISELESS 571.43 
+C1a         79 80  3.98N 
+R48         80 79 R_NOISELESS 100MEG 
+G_1         80 MID IN MID  -175M
+Rsrc        MID 80 R_NOISELESS 1 
+R2b         MID 78 R_NOISELESS 16.67MEG 
+C2a         78 81  15.92F 
+R73         81 78 R_NOISELESS 100MEG 
+GVCCS7      81 MID 79 MID  -1
+R49         MID 81 R_NOISELESS 1 
+.ends
+*
+.subckt PSRR_CMRR_1_INA333 OUT IN MID
+.model R_NOISELESS RES( TCE=0 T_ABS=-273.15)
+G_2         OUT MID 82 MID  -125
+R74         MID OUT R_NOISELESS 1 
+R2a         MID 83 R_NOISELESS 30.01K 
+C1a         83 84  53.05P 
+R48         84 83 R_NOISELESS 100MEG 
+G_1         84 MID IN MID  -3.33M
+Rsrc        MID 84 R_NOISELESS 1 
+R2b         MID 82 R_NOISELESS 806.45K 
+C2a         82 85  1.99P 
+R73         85 82 R_NOISELESS 100MEG 
+GVCCS7      85 MID 83 MID  -1
+R49         MID 85 R_NOISELESS 1 
+.ends
+*
+.SUBCKT VOS_DRIFT2_INA333_INA333 VOS+ VOS-
+.PARAM DC = 4.5e-6
+.PARAM POL = 1
+.PARAM DRIFT = 0.25E-06
+E1 VOS+ VOS- VALUE={DC}
+.ENDS
+*
+.SUBCKT VOS_DRIFT1_INA333_INA333 VOS+ VOS-
+.PARAM DC = -5.5e-6
+.PARAM POL = 1
+.PARAM DRIFT = -0.25E-06
+E1 VOS+ VOS- VALUE={DC}
+.ENDS
+*
+.SUBCKT VOS_DRIFT_INA333 VOS+ VOS-
+.PARAM DC = 19.5e-6
+.PARAM POL = 1
+.PARAM DRIFT = 0.05E-06
+E1 VOS+ VOS- VALUE={DC}
+.ENDS
+*
+.subckt CLAMP_AMP_HI_INA333 VC+ VC- VIN COM VO+ VO-
+.param G=10
+GVo+ COM Vo+ Value = {V(VIN,COM)>V(VC+,COM) ? ((V(VIN,COM)-V(VC+,COM))*G) : 0}
+GVo- COM Vo- Value = {V(VIN,COM)<V(VC-,COM) ? ((V(VC-,COM)-V(VIN,COM))*G) : 0}
+.ends
+*
+.subckt CLAMP_AMP_LO_INA333 VC+ VC- VIN COM VO+ VO-
+.param G=1
+GVo+ COM Vo+ Value = {V(VIN,COM)>V(VC+,COM) ? ((V(VIN,COM)-V(VC+,COM))*G) : 0}
+GVo- COM Vo- Value = {V(VIN,COM)<V(VC-,COM) ? ((V(VC-,COM)-V(VIN,COM))*G) : 0}
+.ends
+*
+.subckt ESD_INA333 VEE VCC ESD_INA333n ESD_INA333p
+.model S_VSWITCH_1 SW (Ron=50 Roff=1T Vt=650m Vh=100m)
+.model S_VSWITCH_2 SW (Ron=50 Roff=1T Vt=475m Vh=50m)
+S7          ESD_INA333p ESD_INA333n ESD_INA333p ESD_INA333n S_VSWITCH_1
+S6          ESD_INA333n ESD_INA333p ESD_INA333n ESD_INA333p S_VSWITCH_1
+S5          VEE ESD_INA333p VEE ESD_INA333p S_VSWITCH_2
+S4          VEE ESD_INA333n VEE ESD_INA333n S_VSWITCH_2
+S2          ESD_INA333n VCC ESD_INA333n VCC S_VSWITCH_2
+S3          ESD_INA333p VCC ESD_INA333p VCC S_VSWITCH_2
+.ends
+*
+.subckt FEMT_INA333 1 2
+.param NVRF=100
+.param RNVF={1.184*PWR(NVRF,2)}
+E1 3 0 5 0 10
+R1 5 0 {RNVF}
+R2 5 0 {RNVF}
+G1 1 2 3 0 1E-6
+.ends
+*
+.subckt OL_SENSE_INA333 COM SW+ OLN  OLP
+GSW+ COM SW+ Value = {(V(OLN,COM)>10e-3 || V(OLP,COM)>10e-3) ? 1 : 0}
+.ends
+*
+.subckt VCCS_EXT_LIM_INA333 VIN+ VIN- IOUT- IOUT+ VP+ VP-
+.param Gain = 1
+G1 IOUT+ IOUT- VALUE={Gain*V(VIN+,VIN-)<V(VP-,VIN-) ? V(VP-,VIN-) : Gain*V(VIN+,VIN-)>V(VP+,VIN-) ? V(VP+,VIN-) : Gain*V(VIN+,VIN-)}
+.ends
+*
+.subckt VCCS_LIM_1_INA333 VC+ VC- IOUT+ IOUT-
+.param Gain = 1e-4
+.param Ipos = .5
+.param Ineg = -.5
+G1 IOUT+ IOUT- VALUE={Gain*V(VC+,VC-)<Ineg ? Ineg : Gain*V(VC+,VC-)>Ipos ? Ipos : Gain*V(VC+,VC-)}
+.ends
+*
+.subckt VCCS_LIM_2_INA333 VC+ VC- IOUT+ IOUT-
+.param Gain = 0.034771
+.param Ipos = 0.21029
+.param Ineg = -0.21033
+G1 IOUT+ IOUT- VALUE={Gain*V(VC+,VC-)<Ineg ? Ineg : Gain*V(VC+,VC-)>Ipos ? Ipos : Gain*V(VC+,VC-)}
+.ends
+*
+.subckt VCCS_LIM_3_INA333 VC+ VC- IOUT+ IOUT-
+.param Gain = 1
+.param Ipos = 0.1008
+.param Ineg = -0.1449
+G1 IOUT+ IOUT- VALUE={Gain*V(VC+,VC-)<Ineg ? Ineg : Gain*V(VC+,VC-)>Ipos ? Ipos : Gain*V(VC+,VC-)}
+.ends
+*
+.subckt VCCS_LIM_4_INA333 VC+ VC- IOUT+ IOUT-
+.param Gain = 1
+.param Ipos = 0.2016
+.param Ineg = -0.2898
+G1 IOUT+ IOUT- VALUE={Gain*V(VC+,VC-)<Ineg ? Ineg : Gain*V(VC+,VC-)>Ipos ? Ipos : Gain*V(VC+,VC-)}
+.ends
+*
+.subckt VCCS_LIM_CLAWn_INA333 VC+ VC- IOUT+ IOUT-
+G1 IOUT+ IOUT- TABLE {(V(VC+,VC-))} =
++(0, 3e-05)
++(3.3333, 0.00013691)
++(6.6667, 0.0002707)
++(8.8889, 0.00034123)
++(9, 0.00034476)
++(9.2222, 0.00035181)
++(9.4444, 0.00035887)
++(9.6667, 0.00036592)
++(9.8889, 0.00037297)
++(10, 0.0003765)
+.ends
+*
+.subckt VCCS_LIM_CLAWp_INA333 VC+ VC- IOUT+ IOUT-
+G1 IOUT+ IOUT- TABLE {(V(VC+,VC-))} =
++(0, 3e-05)
++(1.5325, 0.00017373)
++(3.065, 0.00048081)
++(4.0867, 0.00078722)
++(4.1378, 0.00080691)
++(4.2399, 0.00085026)
++(4.3421, 0.00091894)
++(4.4443, 0.00099847)
++(4.5464, 0.0011134)
++(4.5975, 0.0011953)
+.ends
+*
+.subckt VCCS_LIM_GR_INA333 VC+ VC- IOUT+ IOUT-
+.param Gain = 1
+.param Ipos = 0.42059
+.param Ineg = -0.42059
+G1 IOUT+ IOUT- VALUE={Gain*V(VC+,VC-)<Ineg ? Ineg : Gain*V(VC+,VC-)>Ipos ? Ipos : Gain*V(VC+,VC-)}
+.ends
+*
+.subckt VCCS_LIM_IQ_INA333 VC+ VC- IOUT+ IOUT-
+.param Gain = 1e-3
+G1 IOUT- IOUT+ VALUE={V(VC+,VC-)<=0 ? 0 : Gain*V(VC+,VC-)}
+.ends
+*
+.subckt VCCS_LIM_ZO_INA333 VC+ VC- IOUT+ IOUT-
+.param Gain = 78939.8006
+.param Ipos = 3833.9
+.param Ineg = -8434.58
+G1 IOUT+ IOUT- VALUE={Gain*V(VC+,VC-)<Ineg ? Ineg : Gain*V(VC+,VC-)>Ipos ? Ipos : Gain*V(VC+,VC-)}
+.ends
+*
+.subckt VNSE_INA333 1 2
+.param NVR=55
+.param RNV={1.184*PWR(NVR,2)}
+R4 5 0 {RNV}
+R5 5 0 {RNV}
+E3 1 2 5 0 10
+.ends
+*
