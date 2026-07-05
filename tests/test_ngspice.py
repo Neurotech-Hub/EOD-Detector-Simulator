@@ -28,3 +28,18 @@ def test_patch_netlist_params_input_network():
     assert ".param R_DIFF=2Meg" in patched
     assert ".param C_DIFF=100p" in patched
     assert ".param VREF=1.65" in patched
+
+
+def test_patch_netlist_params_comparator_network():
+    content = """* bench
+.param C_OUT=2.2n
+.param R_COMP=4.7k
+.param R_HYST=1Meg
+"""
+    patched = patch_netlist_params(
+        content,
+        {"C_OUT": "10n", "R_COMP": "10k", "R_HYST": "500k"},
+    )
+    assert ".param C_OUT=10n" in patched
+    assert ".param R_COMP=10k" in patched
+    assert ".param R_HYST=500k" in patched

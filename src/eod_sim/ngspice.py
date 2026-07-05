@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 
 from eod_sim.stages.registry import Stage
+from eod_sim.validation import scan_ngspice_output
 
 
 class NgspiceNotFoundError(RuntimeError):
@@ -17,6 +18,11 @@ class NgspiceNotFoundError(RuntimeError):
 
 class NgspiceSimulationError(RuntimeError):
     """Raised when ngspice exits with an error."""
+
+
+DEFAULT_TIMEOUT_S = 300.0
+"""Kill ngspice after this many seconds; a healthy stage run takes well
+under two minutes, while convergence-stuck runs can hang indefinitely."""
 
 
 def find_ngspice() -> str:
@@ -38,6 +44,7 @@ def run_batch(
     raw_path: Path,
     log_path: Path | None = None,
     ascii_raw: bool = False,
+    timeout_s: float = DEFAULT_TIMEOUT_S,
 ) -> subprocess.CompletedProcess[str]:
     """Run ngspice in batch mode and write output to a raw file."""
     ngspice = find_ngspice()
@@ -48,13 +55,32 @@ def run_batch(
     if ascii_raw:
         env["SPICE_ASCIIRAWFILE"] = "1"
 
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        env=env,
-        cwd=netlist_path.parent,
-    )
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=netlist_path.parent,
+            timeout=timeout_s,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout.decode() if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+        stderr = exc.stderr.decode() if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+        if log_path:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text(
+                f"Command: {' '.join(cmd)}\n"
+                f"TIMED OUT after {timeout_s:.0f} s (killed)\n\n"
+                f"--- stdout ---\n{stdout}\n\n"
+                f"--- stderr ---\n{stderr}\n"
+            )
+        raise NgspiceSimulationError(
+            f"ngspice did not finish within {timeout_s:.0f} s and was killed — "
+            "the simulation is likely stuck at a convergence failure.\n"
+            "Check the run netlist and component values; the behavioral "
+            "detector benches are expected to converge on the first try."
+        ) from exc
 
     if log_path:
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -65,17 +91,37 @@ def run_batch(
             f"--- stderr ---\n{result.stderr}\n"
         )
 
+    log_hint = f"See log: {log_path}" if log_path else ""
+    findings = scan_ngspice_output(result.stdout, result.stderr)
+    advice = ""
+    if findings:
+        advice = (
+            f"Detected: {', '.join(findings)}.\n"
+            "Check the run netlist and component values; the behavioral "
+            "detector benches are expected to converge on the first try.\n"
+        )
+
     if result.returncode != 0:
         raise NgspiceSimulationError(
             f"ngspice failed (exit {result.returncode}).\n"
+            f"{advice}"
             f"stderr:\n{result.stderr}\n"
-            f"stdout:\n{result.stdout}"
+            f"{log_hint}"
+        )
+
+    # ngspice can exit 0 after aborting the transient; scan output for
+    # convergence failures so partial results are never treated as success.
+    if findings:
+        raise NgspiceSimulationError(
+            f"ngspice reported simulation problems despite exit code 0.\n"
+            f"{advice}{log_hint}"
         )
 
     if not raw_path.is_file():
         raise NgspiceSimulationError(
             f"ngspice completed but raw file not found: {raw_path}\n"
-            f"stderr:\n{result.stderr}"
+            f"stderr:\n{result.stderr}\n"
+            f"{log_hint}"
         )
 
     return result

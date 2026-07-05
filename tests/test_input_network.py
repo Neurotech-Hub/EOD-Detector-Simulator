@@ -1,6 +1,6 @@
 """Tests for INA input network parameters."""
 
-from eod_sim.input_network import InputNetworkParams, stage_has_input_network
+from eod_sim.input_network import InputNetworkParams, stage_has_ina_gain, stage_has_input_network
 
 
 def test_input_network_defaults():
@@ -28,3 +28,10 @@ def test_stage_has_input_network():
     assert stage_has_input_network("03_detector")
     assert not stage_has_input_network("00_sanity_ina333")
     assert not stage_has_input_network("00_sanity_mcp6561")
+
+
+def test_stage_has_ina_gain():
+    assert stage_has_ina_gain("00_sanity_ina333")
+    assert stage_has_ina_gain("02_frontend")
+    assert stage_has_ina_gain("03_detector")
+    assert not stage_has_ina_gain("01_passives")

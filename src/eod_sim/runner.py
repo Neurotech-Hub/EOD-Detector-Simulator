@@ -5,11 +5,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from eod_sim.comparator_network import ComparatorNetworkParams, stage_has_comparator_network
 from eod_sim.input_network import InputNetworkParams, stage_has_input_network
 from eod_sim.ngspice import bench_template_path, run_batch, write_patched_netlist
 from eod_sim.plot import PulseViewConfig, plot_single_pulse, plot_waveforms
 from eod_sim.results import SimulationResult, load_raw
 from eod_sim.stages.registry import DEFAULT_STAGE_ID, Stage, get_stage
+from eod_sim.validation import (
+    SimulationQuality,
+    SimulationValidationError,
+    validate_simulation,
+)
 from eod_sim.waveforms import (
     EODPulseConfig,
     LFOffsetParams,
@@ -48,6 +54,7 @@ class RunConfig:
     lf_offset_span_hz: float = 10.0
     lf_offset_seed: int | None = None
     input_network: InputNetworkParams | None = None
+    comparator_network: ComparatorNetworkParams | None = None
 
 
 @dataclass
@@ -64,6 +71,7 @@ class RunResult:
     measured_gain: float | None
     simulation: SimulationResult | None = None
     lf_offset: LFOffsetParams | None = None
+    quality: SimulationQuality | None = None
 
 
 def _measured_gain(stage: Stage, result: SimulationResult) -> float | None:
@@ -116,10 +124,8 @@ def run_simulation(
         params["VTHRESH"] = (
             f"{config.vthresh if config.vthresh is not None else stage.default_vthresh:g}"
         )
-    if stage.patches_rg:
+    if stage.patches_rg or stage.fixed_rg:
         params["RGVAL"] = format_rg_spice(gain_to_rg(config.gain))
-    elif stage.fixed_rg:
-        params["RGVAL"] = "100k"
 
     sample_us = (
         config.sample_us
@@ -132,7 +138,13 @@ def run_simulation(
         net = config.input_network or InputNetworkParams()
         params.update(net.to_spice_params())
 
+    comp: ComparatorNetworkParams | None = None
+    if stage_has_comparator_network(stage.id):
+        comp = config.comparator_network or ComparatorNetworkParams()
+        params.update(comp.to_spice_params())
+
     wf_config: EODPulseConfig | None = None
+    wf_result = None
     lf_offset: LFOffsetParams | None = None
     if stage.supports_eod_input:
         wf_config = EODPulseConfig(
@@ -174,8 +186,23 @@ def run_simulation(
         extra_probes=stage.extra_probes,
     )
 
+    quality = validate_simulation(
+        result,
+        stage=stage,
+        tstop_s=config.duration_ms * 1e-3,
+        waveform=wf_result,
+    )
+    if not quality.passed:
+        raise SimulationValidationError(
+            "Simulation failed validation:\n- "
+            + "\n- ".join(quality.errors)
+            + f"\nSee log: {log_path}"
+        )
+
     measured_gain = _measured_gain(stage, result)
     plot_gain = measured_gain if stage.patches_rg or stage.id in ("02_frontend", "03_detector") else None
+
+    stimulus = (wf_result.time_s, wf_result.vin_diff) if wf_result is not None else None
 
     plot_path = plot_waveforms(
         result,
@@ -184,6 +211,7 @@ def run_simulation(
         gain=plot_gain,
         backend=config.plot_backend,
         bench_variant=bench_variant,
+        stimulus=stimulus,
     )
 
     pulse_plot_path = None
@@ -211,6 +239,7 @@ def run_simulation(
             gain=plot_gain,
             backend=config.plot_backend,
             bench_variant=bench_variant,
+            stimulus=stimulus,
         )
 
     nodes = stage.resolved_signal_nodes()
@@ -236,4 +265,5 @@ def run_simulation(
         measured_gain=measured_gain,
         simulation=result,
         lf_offset=lf_offset,
+        quality=quality,
     )

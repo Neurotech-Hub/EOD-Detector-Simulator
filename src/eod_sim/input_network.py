@@ -39,3 +39,8 @@ class InputNetworkParams:
 def stage_has_input_network(stage_id: str) -> bool:
     """Return whether a stage includes the parameterized input passive network."""
     return stage_id in INPUT_NETWORK_STAGES
+
+
+def stage_has_ina_gain(stage_id: str) -> bool:
+    """Return whether the stage INA333 gain (R3 / RGVAL) is tunable."""
+    return stage_id in ("00_sanity_ina333", "02_frontend", "03_detector")

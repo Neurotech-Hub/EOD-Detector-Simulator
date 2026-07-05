@@ -10,6 +10,7 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+from eod_sim.constants import OVERVIEW_TRIM_MS
 from eod_sim.results import SimulationResult
 from eod_sim.stages.registry import Stage
 
@@ -22,6 +23,11 @@ class PulseViewConfig:
     t_start_s: float
     t_end_s: float
     pulse_index: int = 0
+
+
+def _overview_mask(time_s: np.ndarray) -> np.ndarray:
+    """Drop the first OVERVIEW_TRIM_MS of transient startup artifacts."""
+    return time_s >= OVERVIEW_TRIM_MS * 1e-3
 
 
 def _time_ms(time_s: np.ndarray) -> np.ndarray:
@@ -40,6 +46,30 @@ def _output_subtitle(gain: float | None) -> str:
 
 def _resolve_node(result: SimulationResult, nodes: dict[str, str], key: str) -> str:
     return nodes.get(key, key)
+
+
+Stimulus = tuple[np.ndarray, np.ndarray]
+"""Commanded stimulus overlay: (time_s, differential volts)."""
+
+
+def _stimulus_overlay(
+    stage: Stage,
+    input_keys: tuple[str, str],
+    stimulus: Stimulus | None,
+) -> Stimulus | None:
+    """Return the stimulus overlay if the plotted input is the driven pair.
+
+    The commanded waveform is only comparable to the trace when the plot
+    shows the filesource-driven nodes; comparing it against downstream nodes
+    (e.g. INA inputs after the HPF) would be misleading.
+    """
+    if stimulus is None:
+        return None
+    nodes = stage.resolved_signal_nodes()
+    plotted = (nodes.get(input_keys[0], input_keys[0]), nodes.get(input_keys[1], input_keys[1]))
+    if plotted != stage.driven_nodes():
+        return None
+    return stimulus
 
 
 def _trace_for_key(
@@ -95,6 +125,7 @@ def plot_single_pulse_matplotlib(
     stage: Stage,
     gain: float | None,
     title: str,
+    stimulus: Stimulus | None = None,
 ) -> Path:
     """Save a dual-axis single-pulse figure."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -116,6 +147,20 @@ def plot_single_pulse_matplotlib(
     if stage.pulse_zoom_right_mode == "relative":
         right_label = f"{right_label} − REF"
 
+    overlay_lines = []
+    overlay = _stimulus_overlay(stage, left_keys, stimulus)
+    if overlay is not None:
+        s_t, s_v = overlay
+        s_mask = (s_t >= view.t_start_s) & (s_t <= view.t_end_s)
+        overlay_lines = ax_left.plot(
+            _time_us_from_onset(s_t[s_mask], view.pulse_onset_s),
+            s_v[s_mask] * 1e3,
+            color="#94a3b8",
+            linewidth=1.2,
+            linestyle="--",
+            label="Commanded stimulus",
+        )
+
     line_left = ax_left.plot(t_us, left_w * 1e3, color="#2563eb", linewidth=1.5, label=left_label)
     line_right = ax_right.plot(
         t_us, right_w * 1e3, color="#dc2626", linewidth=1.5, label=right_label
@@ -129,7 +174,7 @@ def plot_single_pulse_matplotlib(
     ax_left.grid(True, alpha=0.3)
     ax_left.set_title(f"{title} — pulse {view.pulse_index + 1}")
 
-    lines = line_left + line_right
+    lines = overlay_lines + line_left + line_right
     ax_left.legend(lines, [line.get_label() for line in lines], loc="upper right")
 
     fig.tight_layout()
@@ -145,6 +190,7 @@ def plot_single_pulse_plotly(
     stage: Stage,
     gain: float | None,
     title: str,
+    stimulus: Stimulus | None = None,
 ) -> Path:
     """Save an interactive dual-axis single-pulse HTML figure."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -164,6 +210,20 @@ def plot_single_pulse_plotly(
         right_label = f"{right_label} − REF"
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
+    overlay = _stimulus_overlay(stage, left_keys, stimulus)
+    if overlay is not None:
+        s_t, s_v = overlay
+        s_mask = (s_t >= view.t_start_s) & (s_t <= view.t_end_s)
+        fig.add_trace(
+            go.Scatter(
+                x=_time_us_from_onset(s_t[s_mask], view.pulse_onset_s),
+                y=s_v[s_mask] * 1e3,
+                mode="lines",
+                name="Commanded stimulus",
+                line=dict(color="#94a3b8", dash="dash"),
+            ),
+            secondary_y=False,
+        )
     fig.add_trace(
         go.Scatter(x=t_us, y=left_w * 1e3, mode="lines", name=left_label, line=dict(color="#2563eb")),
         secondary_y=False,
@@ -193,6 +253,7 @@ def plot_single_pulse(
     gain: float | None,
     backend: str,
     bench_variant: str,
+    stimulus: Stimulus | None = None,
 ) -> Path:
     """Plot a single-pulse dual-axis view using the selected backend."""
     variant_label = bench_variant.upper() if bench_variant == "ti" else bench_variant.capitalize()
@@ -201,11 +262,11 @@ def plot_single_pulse(
 
     if backend == "matplotlib":
         return plot_single_pulse_matplotlib(
-            result, output_dir / f"{stem}.png", view, stage, gain, title=title
+            result, output_dir / f"{stem}.png", view, stage, gain, title=title, stimulus=stimulus
         )
     if backend == "plotly":
         return plot_single_pulse_plotly(
-            result, output_dir / f"{stem}.html", view, stage, gain, title=title
+            result, output_dir / f"{stem}.html", view, stage, gain, title=title, stimulus=stimulus
         )
     raise ValueError(f"Unknown plot backend: {backend}")
 
@@ -216,16 +277,18 @@ def plot_matplotlib(
     stage: Stage,
     gain: float | None,
     title: str,
+    stimulus: Stimulus | None = None,
 ) -> Path:
     """Save a two-panel matplotlib figure of input and output waveforms."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     nodes = stage.resolved_signal_nodes()
-    t_ms = _time_ms(result.time_s)
+    trim = _overview_mask(result.time_s)
+    t_ms = _time_ms(result.time_s[trim])
 
-    top = _trace_pair(result, nodes, stage.overview_input[0], stage.overview_input[1])
+    top = _trace_pair(result, nodes, stage.overview_input[0], stage.overview_input[1])[trim]
     bottom = _trace_output(
         result, nodes, stage.overview_output, stage.overview_bottom_mode
-    )
+    )[trim]
 
     bottom_title = stage.output_label or _output_subtitle(gain)
     if stage.overview_bottom_mode == "relative":
@@ -236,9 +299,24 @@ def plot_matplotlib(
     fig, axes = plt.subplots(2, 1, figsize=(12, 7), sharex=True)
     fig.suptitle(title, fontsize=14)
 
-    axes[0].plot(t_ms, top * 1e3, color="#2563eb", linewidth=1.2)
+    overlay = _stimulus_overlay(stage, stage.overview_input, stimulus)
+    if overlay is not None:
+        s_t, s_v = overlay
+        s_mask = _overview_mask(s_t)
+        axes[0].plot(
+            _time_ms(s_t[s_mask]),
+            s_v[s_mask] * 1e3,
+            color="#94a3b8",
+            linewidth=1.0,
+            linestyle="--",
+            label="Commanded stimulus",
+        )
+
+    axes[0].plot(t_ms, top * 1e3, color="#2563eb", linewidth=1.2, label=stage.input_label)
     axes[0].set_ylabel("mV")
     axes[0].set_title(stage.input_label)
+    if overlay is not None:
+        axes[0].legend(loc="upper right", fontsize=8)
     axes[0].grid(True, alpha=0.3)
 
     if stage.comparator_stage and stage.overview_bottom_mode == "absolute":
@@ -264,16 +342,18 @@ def plot_plotly(
     stage: Stage,
     gain: float | None,
     title: str,
+    stimulus: Stimulus | None = None,
 ) -> Path:
     """Save an interactive two-panel Plotly HTML figure."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     nodes = stage.resolved_signal_nodes()
-    t_ms = _time_ms(result.time_s)
+    trim = _overview_mask(result.time_s)
+    t_ms = _time_ms(result.time_s[trim])
 
-    top = _trace_pair(result, nodes, stage.overview_input[0], stage.overview_input[1])
+    top = _trace_pair(result, nodes, stage.overview_input[0], stage.overview_input[1])[trim]
     bottom = _trace_output(
         result, nodes, stage.overview_output, stage.overview_bottom_mode
-    )
+    )[trim]
 
     bottom_title = stage.output_label or _output_subtitle(gain)
     if stage.overview_bottom_mode == "relative":
@@ -286,6 +366,22 @@ def plot_plotly(
         subplot_titles=(stage.input_label, bottom_title),
         vertical_spacing=0.1,
     )
+
+    overlay = _stimulus_overlay(stage, stage.overview_input, stimulus)
+    if overlay is not None:
+        s_t, s_v = overlay
+        s_mask = _overview_mask(s_t)
+        fig.add_trace(
+            go.Scatter(
+                x=_time_ms(s_t[s_mask]),
+                y=s_v[s_mask] * 1e3,
+                mode="lines",
+                name="Commanded stimulus",
+                line=dict(color="#94a3b8", dash="dash"),
+            ),
+            row=1,
+            col=1,
+        )
 
     fig.add_trace(
         go.Scatter(x=t_ms, y=top * 1e3, mode="lines", name="Input (mV)", line=dict(color="#2563eb")),
@@ -325,6 +421,7 @@ def plot_waveforms(
     gain: float | None = None,
     backend: str = "matplotlib",
     bench_variant: str = "ideal",
+    stimulus: Stimulus | None = None,
 ) -> Path:
     """Plot input and output waveforms using the selected backend."""
     variant_label = bench_variant.upper() if bench_variant == "ti" else bench_variant.capitalize()
@@ -332,7 +429,11 @@ def plot_waveforms(
     stem = f"{stage.id}_waveforms_{bench_variant}"
 
     if backend == "matplotlib":
-        return plot_matplotlib(result, output_dir / f"{stem}.png", stage, gain, title=title)
+        return plot_matplotlib(
+            result, output_dir / f"{stem}.png", stage, gain, title=title, stimulus=stimulus
+        )
     if backend == "plotly":
-        return plot_plotly(result, output_dir / f"{stem}.html", stage, gain, title=title)
+        return plot_plotly(
+            result, output_dir / f"{stem}.html", stage, gain, title=title, stimulus=stimulus
+        )
     raise ValueError(f"Unknown plot backend: {backend}")

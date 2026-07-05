@@ -8,13 +8,24 @@ from pathlib import Path
 
 from dash import Dash, Input, Output, State, callback, dcc, html, no_update
 
-from eod_sim.gui.state import GuiState, parse_float, parse_int, parse_optional_int, parse_spice_value
-from eod_sim.gui.views import build_all_figures
+from eod_sim.gui.state import (
+    GuiState,
+    default_ina_gain,
+    parse_float,
+    parse_int,
+    parse_optional_int,
+    parse_spice_value,
+    resolve_gui_gain,
+)
+from eod_sim.gui.views import _empty_figure, build_all_figures
+from eod_sim.comparator_network import stage_has_comparator_network
 from eod_sim.input_network import stage_has_input_network
 from eod_sim.ngspice import NgspiceNotFoundError, NgspiceSimulationError
 from eod_sim.results import SimulationResult, load_raw
 from eod_sim.runner import run_simulation
 from eod_sim.stages.registry import get_stage, list_stages
+from eod_sim.validation import SimulationValidationError
+from eod_sim.waveforms import LFOffsetParams
 
 _INPUT_STYLE = {"width": "100%"}
 
@@ -88,10 +99,14 @@ def _gui_state_from_inputs(
     r_vref,
     r_diff,
     c_diff,
+    c_out,
+    r_comp,
+    r_hyst,
     vref,
     vthresh,
     vdd,
-    gain,
+    ina_gain,
+    sanity_gain,
     view_mode,
 ) -> GuiState:
     enabled = bool(lf_offset_enabled) and "enabled" in (lf_offset_enabled or [])
@@ -115,10 +130,13 @@ def _gui_state_from_inputs(
         r_vref=parse_spice_value(r_vref, "10Meg"),
         r_diff=parse_spice_value(r_diff, "1Meg"),
         c_diff=parse_spice_value(c_diff, "330p"),
+        c_out=parse_spice_value(c_out, "2.2n"),
+        r_comp=parse_spice_value(r_comp, "4.7k"),
+        r_hyst=parse_spice_value(r_hyst, "1Meg"),
         vref=parse_float(vref, 1.65),
         vthresh=parse_float(vthresh, 1.85),
         vdd=parse_float(vdd, 3.3),
-        gain=parse_float(gain, 100.0),
+        gain=resolve_gui_gain(stage_id, ina_gain, sanity_gain),
         view_mode=view_mode or "pulse",
     )
 
@@ -230,7 +248,10 @@ def _control_block() -> html.Div:
             html.Br(),
             html.Label("VTHRESH (V)"),
             _decimal_input("vthresh", 1.85),
-            html.Br(),
+            html.P(
+                "On the board this is the RV1 trimmer wiper (R13/R17 divider).",
+                style={"fontSize": "12px", "color": "#666", "margin": "4px 0 0 0"},
+            ),
             html.Br(),
             html.Label("VDD (V)"),
             _decimal_input("vdd", 3.3),
@@ -239,8 +260,8 @@ def _control_block() -> html.Div:
                 style={"display": "none"},
                 children=[
                     html.Br(),
-                    html.Label("Gain (V/V)"),
-                    _decimal_input("gain", 100),
+                    html.Label("INA333 gain (V/V)"),
+                    _decimal_input("sanity-gain", 100),
                 ],
             ),
             html.Hr(),
@@ -248,6 +269,19 @@ def _control_block() -> html.Div:
                 id="input-network-panel",
                 children=[
                     html.H4("INA input network"),
+                    html.Div(
+                        id="ina-gain-control",
+                        style={"display": "none"},
+                        children=[
+                            html.Label("INA333 gain (V/V)"),
+                            _decimal_input("ina-gain", 2),
+                            html.P(
+                                "Sets R3 (RG); G = 1 + 100k/RG. Minimum 2 V/V.",
+                                style={"fontSize": "12px", "color": "#666", "margin": "4px 0 8px 0"},
+                            ),
+                            html.Br(),
+                        ],
+                    ),
                     html.P(
                         "Symmetric per-leg values; SPICE units (n, k, Meg, p).",
                         style={"fontSize": "12px", "color": "#666", "margin": "0 0 8px 0"},
@@ -273,6 +307,31 @@ def _control_block() -> html.Div:
                 ],
             ),
             html.Hr(),
+            html.Div(
+                id="comparator-network-panel",
+                children=[
+                    html.H4("Comparator network"),
+                    html.P(
+                        "Output coupling and hysteresis; SPICE units (n, k, Meg).",
+                        style={"fontSize": "12px", "color": "#666", "margin": "0 0 8px 0"},
+                    ),
+                    html.Label("Output coupling cap (C5, VREF–ELEC_OUT)"),
+                    _spice_input("c-out", "2.2n"),
+                    html.Br(),
+                    html.Br(),
+                    html.Label("COMP_IN series resistor (R9)"),
+                    _spice_input("r-comp", "4.7k"),
+                    html.Div(
+                        id="r-hyst-control",
+                        children=[
+                            html.Br(),
+                            html.Label("Hysteresis resistor (R5, COMP_IN–TRIGGER)"),
+                            _spice_input("r-hyst", "1Meg"),
+                        ],
+                    ),
+                ],
+            ),
+            html.Hr(),
             html.H4("View"),
             dcc.RadioItems(
                 id="view-mode",
@@ -288,7 +347,17 @@ def _control_block() -> html.Div:
                 style={"fontSize": "12px", "color": "#666", "margin": "6px 0 12px 0"},
             ),
             html.Button("Run Simulation", id="run-button", n_clicks=0, style={"width": "100%"}),
-            html.Div(id="status-line", style={"marginTop": "12px", "fontSize": "13px", "color": "#444"}),
+            dcc.Loading(
+                type="dot",
+                children=html.Div(
+                    id="status-line",
+                    style={"marginTop": "12px", "fontSize": "13px", "color": "#444"},
+                ),
+            ),
+            html.Div(
+                id="stage-mismatch-line",
+                style={"marginTop": "8px", "fontSize": "12px", "color": "#b45309"},
+            ),
         ],
     )
 
@@ -315,12 +384,17 @@ def create_app(project_root: Path) -> Dash:
                                 id="plot-tabs",
                                 value="tab-1",
                                 children=[
-                                    dcc.Tab(label="Input vs ELEC_OUT", value="tab-1"),
-                                    dcc.Tab(label="Input vs COMP_IN", value="tab-2"),
+                                    dcc.Tab(label="Electrodes vs ELEC_OUT", value="tab-1"),
+                                    dcc.Tab(label="ELEC_OUT vs COMP_IN", value="tab-2"),
                                     dcc.Tab(label="Comparator", value="tab-3"),
                                 ],
                             ),
-                            dcc.Graph(id="main-plot", style={"height": "calc(100vh - 140px)"}),
+                            dcc.Loading(
+                                type="default",
+                                children=dcc.Graph(
+                                    id="main-plot", style={"height": "calc(100vh - 140px)"}
+                                ),
+                            ),
                             html.Div(id="metrics-line", style={"fontSize": "13px", "color": "#333", "marginTop": "8px"}),
                         ],
                     ),
@@ -346,6 +420,49 @@ def create_app(project_root: Path) -> Dash:
     )
     def toggle_input_network_panel(stage_id):
         if stage_id and stage_has_input_network(stage_id):
+            return {"display": "block"}
+        return {"display": "none"}
+
+    @callback(
+        Output("comparator-network-panel", "style"),
+        Input("stage-select", "value"),
+    )
+    def toggle_comparator_network_panel(stage_id):
+        if stage_id and stage_has_comparator_network(stage_id):
+            return {"display": "block"}
+        return {"display": "none"}
+
+    @callback(
+        Output("r-hyst-control", "style"),
+        Input("stage-select", "value"),
+    )
+    def toggle_comparator_only_controls(stage_id):
+        # R5 only exists when the comparator is populated (stage 03).
+        return {"display": "block"} if stage_id == "03_detector" else {"display": "none"}
+
+    @callback(
+        Output("stage-mismatch-line", "children"),
+        Input("stage-select", "value"),
+        Input("result-store", "data"),
+    )
+    def warn_stage_mismatch(stage_id, result_data):
+        if not result_data or not stage_id:
+            return ""
+        last_stage = result_data.get("stage_id")
+        if last_stage and last_stage != stage_id:
+            return (
+                f"Plots show the last run ({last_stage}); "
+                "press Run Simulation to simulate the selected stage."
+            )
+        return ""
+
+    @callback(
+        Output("ina-gain-control", "style"),
+        Input("stage-select", "value"),
+    )
+    def toggle_ina_gain_control(stage_id):
+        stage = get_stage(stage_id) if stage_id else None
+        if stage and stage.fixed_rg:
             return {"display": "block"}
         return {"display": "none"}
 
@@ -381,13 +498,22 @@ def create_app(project_root: Path) -> Dash:
         Output("vref", "value"),
         Output("vthresh", "value"),
         Output("vdd", "value"),
+        Output("ina-gain", "value"),
+        Output("sanity-gain", "value"),
         Input("stage-select", "value"),
     )
     def update_circuit_defaults(stage_id):
         if not stage_id:
-            return no_update, no_update, no_update
+            return no_update, no_update, no_update, no_update, no_update
         stage = get_stage(stage_id)
-        return str(stage.default_vref), str(stage.default_vthresh), str(stage.default_vdd)
+        gain_default = str(int(default_ina_gain(stage_id)))
+        return (
+            str(stage.default_vref),
+            str(stage.default_vthresh),
+            str(stage.default_vdd),
+            gain_default if stage.fixed_rg else no_update,
+            gain_default if stage.patches_rg else no_update,
+        )
 
     @callback(
         Output("result-store", "data"),
@@ -412,10 +538,14 @@ def create_app(project_root: Path) -> Dash:
         State("r-vref", "value"),
         State("r-diff", "value"),
         State("c-diff", "value"),
+        State("c-out", "value"),
+        State("r-comp", "value"),
+        State("r-hyst", "value"),
         State("vref", "value"),
         State("vthresh", "value"),
         State("vdd", "value"),
-        State("gain", "value"),
+        State("ina-gain", "value"),
+        State("sanity-gain", "value"),
         State("view-mode", "value"),
         prevent_initial_call=True,
     )
@@ -426,8 +556,25 @@ def create_app(project_root: Path) -> Dash:
         state = _gui_state_from_inputs(*args)
         try:
             run_result = run_simulation(state.to_run_config(project_root), project_root)
-        except (NgspiceNotFoundError, NgspiceSimulationError, ValueError, KeyError) as exc:
-            return None, html.Span(str(exc), style={"color": "crimson"}), ""
+        except (
+            NgspiceNotFoundError,
+            NgspiceSimulationError,
+            SimulationValidationError,
+            ValueError,
+            KeyError,
+        ) as exc:
+            # Keep the last good result so plots don't vanish on failure.
+            status = html.Div(
+                [
+                    html.Span(f"Run failed: {exc}", style={"color": "crimson"}),
+                    html.Br(),
+                    html.Span(
+                        "Showing the previous successful run (if any).",
+                        style={"color": "#666", "fontSize": "12px"},
+                    ),
+                ]
+            )
+            return no_update, status, no_update
 
         metrics_parts = []
         if run_result.peak_vin_mv is not None:
@@ -437,6 +584,11 @@ def create_app(project_root: Path) -> Dash:
         if state.stage_id == "03_detector" and run_result.vout_min_v is not None:
             metrics_parts.append(f"TRIGGER low: {run_result.vout_min_v:.3f} V")
             metrics_parts.append(f"TRIGGER high: {run_result.peak_vout_v:.3f} V")
+        quality = run_result.quality
+        if quality is not None and quality.stimulus_max_error_mv is not None:
+            metrics_parts.append(
+                f"Stimulus fidelity: {quality.stimulus_max_error_mv:.3f} mV max error"
+            )
 
         result_data = {
             "raw_path": str(run_result.raw_path),
@@ -447,7 +599,7 @@ def create_app(project_root: Path) -> Dash:
             result_data["lf_offset"] = asdict(run_result.lf_offset)
 
         status_text = (
-            f"OK — {run_result.raw_path.name}  |  "
+            f"OK — {state.stage_id} ({state.bench_variant})  |  "
             f"{state.pulse_rate_khz:g} kHz  |  "
             f"{state.pulse_mv:g} mV  |  "
             f"{state.duration_ms:g} ms  |  "
@@ -459,8 +611,13 @@ def create_app(project_root: Path) -> Dash:
                 f"  |  LF: {run_result.lf_offset.frequency_hz:.1f} Hz, "
                 f"φ={phase_deg:.0f}°, {run_result.lf_offset.amplitude_mv:g} mV"
             )
-        status = html.Span(status_text, style={"color": "green"})
-        return result_data, status, " | ".join(metrics_parts)
+
+        children = [html.Span(status_text, style={"color": "green"})]
+        if quality is not None:
+            for warning in quality.warnings:
+                children.append(html.Br())
+                children.append(html.Span(f"Warning: {warning}", style={"color": "#b45309"}))
+        return result_data, html.Div(children), " | ".join(metrics_parts)
 
     @callback(
         Output("main-plot", "figure"),
@@ -486,10 +643,14 @@ def create_app(project_root: Path) -> Dash:
         State("r-vref", "value"),
         State("r-diff", "value"),
         State("c-diff", "value"),
+        State("c-out", "value"),
+        State("r-comp", "value"),
+        State("r-hyst", "value"),
         State("vref", "value"),
         State("vthresh", "value"),
         State("vdd", "value"),
-        State("gain", "value"),
+        State("ina-gain", "value"),
+        State("sanity-gain", "value"),
     )
     def update_plot(
         _run_clicks,
@@ -514,10 +675,14 @@ def create_app(project_root: Path) -> Dash:
         r_vref,
         r_diff,
         c_diff,
+        c_out,
+        r_comp,
+        r_hyst,
         vref,
         vthresh,
         vdd,
-        gain,
+        ina_gain,
+        sanity_gain,
     ):
         live_state = _gui_state_from_inputs(
             stage_id,
@@ -538,19 +703,30 @@ def create_app(project_root: Path) -> Dash:
             r_vref,
             r_diff,
             c_diff,
+            c_out,
+            r_comp,
+            r_hyst,
             vref,
             vthresh,
             vdd,
-            gain,
+            ina_gain,
+            sanity_gain,
             view_mode,
         )
         state = _state_for_plot(result_data, live_state)
 
         result_stage_id = result_data.get("stage_id", state.stage_id) if result_data else state.stage_id
         raw_path = result_data.get("raw_path") if result_data else None
-        result = _load_result(raw_path, result_stage_id)
+        try:
+            result = _load_result(raw_path, result_stage_id)
+        except Exception as exc:  # corrupt/partial raw must never crash the GUI
+            return _empty_figure(f"Could not load simulation result: {exc}")
 
-        fig1, fig2, fig3 = build_all_figures(result, state)
+        lf_offset = None
+        if result_data and result_data.get("lf_offset"):
+            lf_offset = LFOffsetParams(**result_data["lf_offset"])
+
+        fig1, fig2, fig3 = build_all_figures(result, state, lf_offset=lf_offset)
         if tab == "tab-2":
             return fig2
         if tab == "tab-3":

@@ -64,7 +64,7 @@ pip install -e ".[dev]"   # includes dash
 python scripts/run_gui.py
 ```
 
-Opens `http://127.0.0.1:8050` with three analysis tabs (Input/ELEC_OUT, Input/COMP_IN, Comparator), overview vs single-pulse zoom, and pulse rate in **kHz** (default 0.5 kHz).
+Opens `http://127.0.0.1:8050` with three analysis tabs (Electrodes/ELEC_OUT, ELEC_OUT/COMP_IN, Comparator), overview vs single-pulse zoom, and pulse rate in **kHz** (default 0.5 kHz). The Electrodes tab overlays the commanded stimulus (dashed) against the simulated electrode differential so numerical problems are immediately visible.
 
 ### Options
 
@@ -104,7 +104,7 @@ outputs/stages/00_sanity_ina333/00_sanity_ina333_pulse1_ideal.png
 
 ### Slow LF offset (water recording)
 
-Enable `--lf-offset` to superimpose a slow differential sine on the EOD pulse train. Each run draws frequency in **10–30 Hz** (20 ± 10 by default) and a random phase relative to the first pulse. Use this to validate the input high-pass network (4.7 nF + 100 kΩ per side, ~338 Hz cutoff in `01_passives`): in **Overview** view you should see large slow swings at the electrodes with much smaller residual at the INA inputs when the filter is working.
+Enable `--lf-offset` to superimpose a slow differential sine on the EOD pulse train. Each run draws frequency in **10–30 Hz** (20 ± 10 by default) and a random phase relative to the first pulse. Use this to validate the input high-pass network in `01_passives`: the differential corner is ~59 Hz (2.35 nF effective coupling into the ~950 kΩ R15/R6 load), so a 20 Hz offset is attenuated to roughly a third at the INA inputs. In **Overview** view you should see large slow swings at the electrodes with a visibly smaller residual at the INA inputs when the filter is working.
 
 ```bash
 python scripts/run_stage.py --stage 01_passives --waveform rounded --lf-offset --lf-offset-mv 150 --duration-ms 50
@@ -130,6 +130,117 @@ python scripts/run_stage.py --stage 01_passives --waveform rounded --c-couple 10
 
 The tuning GUI shows an **INA input network** panel for stages `01_passives`, `02_frontend`, and `03_detector`. Pair with `--lf-offset` and **Overview** view to validate HPF attenuation of slow water artifacts.
 
+### Comparator network (stages 02–03)
+
+Tune output coupling and hysteresis between INA output and comparator input.
+
+| Flag | Default | Component |
+|------|---------|-----------|
+| `--c-out` | `2.2n` | Output coupling cap (C5, VREF–ELEC_OUT) |
+| `--r-comp` | `4.7k` | Series resistor ELEC_OUT–COMP_IN (R9) |
+| `--r-hyst` | `1Meg` | Hysteresis resistor COMP_IN–TRIGGER (R5, stage 03 only) |
+
+The tuning GUI shows a **Comparator network** panel for `02_frontend` and `03_detector`. R5 only applies to `03_detector` — stage 02 has no comparator, so it does not exist there.
+
+Stage 03's comparator is a **behavioral MCP6561 equivalent** ([`eod_comparator_behavioral.inc`](circuits/stages/includes/eod_comparator_behavioral.inc)): threshold comparison against `VTHRESH`, rail-to-rail push-pull output, and hysteresis produced by the **physical R5/R9 network** exactly as on the board (TRIGGER swing through R5 shifts COMP_IN by ~`VDD·R9/(R9+R5)` ≈ 15 mV at the 4.7k/1Meg defaults). The Microchip vendor macromodel was retired from transient benches — see *Known limitations* below.
+
+## Simulation validation
+
+Every run is validated after ngspice completes; a run only counts as
+successful when all checks pass. Otherwise the CLI/GUI reports an explicit
+error instead of plotting misleading data.
+
+- ngspice output is scanned for `timestep too small` / aborted-transient
+  messages even when the exit code is 0.
+- ngspice is killed after a **5-minute timeout** — a convergence-stuck run
+  raises a clear error instead of hanging indefinitely.
+- The raw file must span the full requested duration, be strictly
+  monotonic in time, dense enough to trust, and free of NaN/Inf.
+- **Stimulus fidelity:** the simulated electrode differential
+  (`ELEC_A − ELEC_B`) is compared against the commanded waveform; any
+  deviation above 1 mV fails the run. The stimulus is a stiff source, so
+  deviations indicate solver failure, never physical loading.
+- The GUI overlays the **commanded stimulus (ideal)** as a dashed trace on
+  the Electrodes tab, keeps the previous good result when a run fails, and
+  shows amber warnings from the quality checks.
+
+## Board mapping (EOD_Detector_v3-1, value changes only)
+
+Every tunable in this tool maps 1:1 onto a component on the fixed v3-1
+topology, so explored values transfer straight back to the PCB:
+
+| Sim parameter / flag | Board designator | Stock value |
+|----------------------|------------------|-------------|
+| `--c-couple` | C2, C3 | 4.7 nF |
+| `--r-series` | R4, R7 | 100 kΩ |
+| `--r-vref` | R6, R8 | 10 MΩ |
+| `--r-diff` | R15 | 1 MΩ |
+| `--c-diff` | C4 | 330 pF |
+| `--gain` (sets RG) | R3 | 100 kΩ (G = 2) |
+| `--c-out` | C5 | 2.2 nF |
+| `--r-comp` | R9 | 4.7 kΩ |
+| `--r-hyst` | R5 | 1 MΩ |
+| `--vthresh` | RV1 wiper (R13 = 5.1 kΩ, R17 = 330 Ω divider) | 1.85 V default |
+
+The monostable network (R11/C6 pulse width, R14/C9, LEDs) is downstream of
+TRIGGER and not simulated.
+
+## Suggested component values (sim-derived)
+
+From deterministic sweeps with 200 µs rounded biphasic pulses at 0.5 kHz
+(standard E-series values; all within the fixed v3-1 topology):
+
+| Designator | Stock | Suggestion | Why (measured in sim) |
+|------------|-------|------------|------------------------|
+| **C4** | 330 pF | **47 pF** | Biggest win. Against the ~166 kΩ differential source impedance (2·R4 ∥ R15), 330 pF puts the low-pass corner at ~3 kHz — inside the EOD band. A 200 µs pulse keeps only 47% of its peak (32% at 100 µs). 47 pF moves the corner to ~20 kHz: 78% / 73% preserved. This matches the observed "one side attenuates / distorts at higher frequencies." |
+| **R3** | 100 kΩ (G=2) | **51 kΩ (G≈3)** | At VTHRESH = 1.85 V, G=2 needs ≥300 mV pulses to trigger; G=3 detects 200 mV, and 100 mV once C4 = 47 pF. G=5 (RG = 24 kΩ) detects 100 mV even with stock C4 but eats headroom on large pulses. |
+| **C2, C3** | 4.7 nF | keep, or **2.2 nF** if slow drift dominates | 2.2 nF halves the 20–30 Hz bleed-through at the INA inputs (16% vs 32% residual) for only ~6% pulse-peak loss. Keep 4.7 nF if drift is not a problem in practice. |
+| **R9, C5** | 4.7 kΩ, 2.2 nF | keep | COMP_IN tracks ELEC_OUT faithfully across the R9 sweep (200 Ω – 4.7 kΩ all converge and trigger cleanly). No measured benefit to changing. |
+| **R5** | 1 MΩ | keep | Gives a ~15 mV hysteresis band: exactly one TRIGGER edge per pulse, no chatter, in every test. Going much smaller backfires — at 100 kΩ the R5 loading divides COMP_IN enough to raise the effective threshold and detection stops entirely. |
+| **RV1** (VTHRESH) | ~1.85 V | keep as trim | Margin table: at G=3 with C4 = 47 pF, 100 mV pulses clear 1.85 V. Trim down for weaker signals, up to reject noise. |
+
+Caveats, stated plainly:
+
+- These sweeps optimize **pulse fidelity, slow-drift rejection, and
+  threshold margin** against the commanded differential stimulus. The
+  suspected real-world failure modes involving **electrode impedance
+  mismatch, polarization, and common-mode pickup are not modeled yet** (see
+  Deferred below), so treat those aspects as unverified by simulation.
+- Combined check: with 100 mV LF drift superimposed on 300 mV pulse trains,
+  both stock and suggested values produce exactly one trigger per pulse
+  with zero drift-induced extras.
+
+## Known limitations and sim-only elements
+
+| Element | Physical? | Notes |
+|---------|-----------|-------|
+| Behavioral comparator (stage 03) | Equivalent | Reproduces the MCP6561's threshold, rail-to-rail output, and R5/R9 hysteresis; omits input bias/offset details and exact ~50 ns propagation delay (negligible vs 200–1000 µs EODs). |
+| MCP6561 vendor macromodel | Retired for transient | Its ESD clamp diodes collapse the ngspice timestep **non-deterministically** when cascaded with the INA333 macromodel; solver sweeps (`sparse`, `rshunt`, `trap`, `itl4`, `cshunt`) either failed or distorted TRIGGER. Still used in the standalone `00_sanity_mcp6561` stage. |
+| `Rload_amp` 1 MΩ (ELEC_OUT–VREF) | Bench load | Stabilizes the INA output in simulation. |
+| `Rload_comp` 10 kΩ (TRIGGER–GND) | Bench load | Conventional comparator output load. |
+| Ideal `VREF` source | Simplified | OPA333 reference buffer omitted ([stage 03 README](circuits/stages/03_detector/README.md)). |
+| Ideal `VTHRESH` source | Simplified | RV1 potentiometer divider replaced by a fixed source (`--vthresh`); keep suggested thresholds within RV1's achievable range. |
+| `sim_ti_transient.inc` options | Solver tuning | `method=gear`, relaxed tolerances, `TMAX=10u` for the TI INA333 macromodel. |
+| XSPICE `filesource` stimulus | Sim input | Stiff voltage source pair on ELEC_A/ELEC_B; cannot be loaded by the circuit. |
+
+### Deferred: electrode impedance and common-mode (CM-to-DM) modeling
+
+The stimulus drives `ELEC_A/ELEC_B` as one stiff differential source, so
+**electrode material/polarization, electrode impedance mismatch, and
+common-mode-to-differential conversion cannot be represented yet**. Those
+are leading suspects for the real-world continuous triggering and one-sided
+waveform issues; optimizing component values against them requires adding a
+per-electrode impedance model (series R + double-layer C with mismatch) and
+a separate common-mode/gradient source in a future pass. Design notes for
+bare Ag vs Ag/AgCl and what to model: [ELECTRODES.md](ELECTRODES.md).
+
+### Detector convergence
+
+With the behavioral comparator, the full R9 × pulse-shape matrix (200 Ω to
+4.7 kΩ, rounded and square) converges deterministically in seconds — verified
+by `pytest -m integration`. Any failure is loud: output scanning, post-run
+validation, and a 5-minute ngspice timeout guarantee no silent partial plots.
+
 ## Project layout
 
 ```
@@ -141,7 +252,7 @@ circuits/
     ├── 00_sanity_mcp6561/  MCP6561 comparator threshold step
     ├── 01_passives/        Electrode coupling + INA bias network
     ├── 02_frontend/          INA333 (G=2) + output filter
-    ├── 03_detector/          Full front-end + MCP6561
+    ├── 03_detector/          Full front-end + behavioral comparator
     ├── includes/             Shared netlist fragments
     └── _template/          Copy to start a new stage
 
@@ -176,5 +287,6 @@ The TI macromodel is at [`circuits/models/ina333_ti.lib`](circuits/models/ina333
 ## Tests
 
 ```bash
-pytest
+pytest                    # fast unit tests
+pytest -m integration     # end-to-end ngspice runs (slow; requires ngspice)
 ```

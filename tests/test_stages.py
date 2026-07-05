@@ -45,7 +45,7 @@ def test_detector_stage_is_runnable():
     stage = get_stage("03_detector")
     assert stage.is_runnable
     assert stage.comparator_stage is True
-    assert stage.signal_nodes["out"] == "comp_out"
+    assert stage.signal_nodes["out"] == "trigger"
 
 
 def test_unknown_stage_raises():

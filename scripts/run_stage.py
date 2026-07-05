@@ -11,10 +11,12 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from eod_sim.comparator_network import ComparatorNetworkParams, stage_has_comparator_network  # noqa: E402
 from eod_sim.input_network import InputNetworkParams, stage_has_input_network  # noqa: E402
 from eod_sim.ngspice import NgspiceNotFoundError, NgspiceSimulationError  # noqa: E402
 from eod_sim.runner import RunConfig, run_simulation  # noqa: E402
 from eod_sim.stages.registry import DEFAULT_STAGE_ID, get_stage, list_stages  # noqa: E402
+from eod_sim.validation import SimulationValidationError  # noqa: E402
 from eod_sim.waveforms import format_rg_spice, gain_to_rg  # noqa: E402
 
 
@@ -35,7 +37,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Bench variant (e.g. ideal, ti, default). Defaults to stage's default_bench.",
     )
-    parser.add_argument("--gain", type=float, default=100.0, help="INA333 gain (V/V)")
+    parser.add_argument(
+        "--gain",
+        type=float,
+        default=None,
+        help="INA333 gain (V/V); sets R3 (RG = 100k/(G-1)). Stage default if omitted",
+    )
     parser.add_argument("--pulse-mv", type=float, default=1.0, help="Peak diff pulse (mV)")
     parser.add_argument(
         "--waveform",
@@ -88,7 +95,12 @@ def parse_args() -> argparse.Namespace:
         help="Root output directory (stage outputs go under outputs/stages/)",
     )
     parser.add_argument("--vref", type=float, default=None, help="Reference voltage (V)")
-    parser.add_argument("--vthresh", type=float, default=None, help="Comparator threshold (V)")
+    parser.add_argument(
+        "--vthresh",
+        type=float,
+        default=None,
+        help="Comparator threshold (V); on the board this is the RV1 wiper (R13/R17 divider)",
+    )
     parser.add_argument("--vdd", type=float, default=None, help="Supply voltage (V)")
     parser.add_argument(
         "--lf-offset",
@@ -144,6 +156,21 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Differential input cap SPICE value (C4); default 330p",
     )
+    parser.add_argument(
+        "--c-out",
+        default=None,
+        help="Output coupling cap SPICE value (C5); default 2.2n",
+    )
+    parser.add_argument(
+        "--r-comp",
+        default=None,
+        help="COMP_IN series resistor SPICE value (R9); default 4.7k",
+    )
+    parser.add_argument(
+        "--r-hyst",
+        default=None,
+        help="Hysteresis resistor SPICE value (R5); default 1Meg",
+    )
     return parser.parse_args()
 
 
@@ -159,6 +186,17 @@ def _input_network_from_args(args: argparse.Namespace) -> InputNetworkParams:
         net.r_diff = args.r_diff
     if args.c_diff is not None:
         net.c_diff = args.c_diff
+    return net
+
+
+def _comparator_network_from_args(args: argparse.Namespace) -> ComparatorNetworkParams:
+    net = ComparatorNetworkParams()
+    if args.c_out is not None:
+        net.c_out = args.c_out
+    if args.r_comp is not None:
+        net.r_comp = args.r_comp
+    if args.r_hyst is not None:
+        net.r_hyst = args.r_hyst
     return net
 
 
@@ -189,12 +227,10 @@ def main() -> int:
     print(f"Stage: {args.stage}")
     print(f"Bench: {bench_variant}")
 
-    if stage.patches_rg:
-        rg_spice = format_rg_spice(gain_to_rg(args.gain))
-        print(f"Gain: {args.gain:.1f} V/V  ->  RG = {rg_spice}")
-
-    if stage.fixed_rg:
-        print("INA333 gain: 2 V/V (RG = 100k, fixed in schematic)")
+    if stage.patches_rg or stage.fixed_rg:
+        gain = args.gain if args.gain is not None else (100.0 if stage.patches_rg else 2.0)
+        rg_spice = format_rg_spice(gain_to_rg(gain))
+        print(f"Gain: {gain:g} V/V  ->  R3 (RG) = {rg_spice}")
 
     if stage.supports_eod_input:
         print(f"Waveform: {args.waveform}", end="")
@@ -211,10 +247,19 @@ def main() -> int:
             f"R_VREF={net.r_vref}  R_DIFF={net.r_diff}  C_DIFF={net.c_diff}"
         )
 
+    if stage_has_comparator_network(args.stage):
+        comp = _comparator_network_from_args(args)
+        print(
+            "Comparator network: "
+            f"C_OUT={comp.c_out}  R_COMP={comp.r_comp}  R_HYST={comp.r_hyst}"
+        )
+
+    gain = args.gain if args.gain is not None else (100.0 if stage.patches_rg else 2.0 if stage.fixed_rg else 100.0)
+
     config = RunConfig(
         stage_id=args.stage,
         bench_variant=bench_variant,
-        gain=args.gain,
+        gain=gain,
         pulse_mv=args.pulse_mv,
         pulse_shape=args.waveform,
         pulse_width_us=args.pulse_width_us,
@@ -236,6 +281,7 @@ def main() -> int:
         lf_offset_span_hz=args.lf_offset_span_hz,
         lf_offset_seed=args.lf_offset_seed,
         input_network=_input_network_from_args(args),
+        comparator_network=_comparator_network_from_args(args),
     )
 
     try:
@@ -254,6 +300,17 @@ def main() -> int:
         print(f"Error: {exc}", file=sys.stderr)
         print(f"See log: {log_path}", file=sys.stderr)
         return 1
+    except SimulationValidationError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    if result.quality is not None:
+        for warning in result.quality.warnings:
+            print(f"Warning: {warning}", file=sys.stderr)
+        if result.quality.stimulus_max_error_mv is not None:
+            print(
+                f"Stimulus fidelity: {result.quality.stimulus_max_error_mv:.3f} mV max error"
+            )
 
     print(f"Output dir: {result.output_dir}")
     print(f"Simulation raw: {result.raw_path}")

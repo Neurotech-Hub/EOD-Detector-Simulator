@@ -20,10 +20,21 @@ class SimulationResult:
     ref: np.ndarray
     extra: dict[str, np.ndarray] = field(default_factory=dict)
     signal_nodes: dict[str, str] = field(default_factory=dict)
+    missing_probes: set[str] = field(default_factory=set)
 
     @property
     def vin_diff(self) -> np.ndarray:
         return self.in_p - self.in_n
+
+    def has_node(self, node: str) -> bool:
+        """Return whether a node was actually saved in the raw file."""
+        if node in self.missing_probes:
+            return False
+        try:
+            self.node_voltage(node)
+            return True
+        except KeyError:
+            return False
 
     def node_voltage(self, node: str) -> np.ndarray:
         """Return voltage trace for a SPICE node name."""
@@ -69,21 +80,19 @@ def _get_trace(raw: RawRead, name: str) -> np.ndarray:
     raise KeyError(f"Trace '{name}' not found. Available: {available}")
 
 
-def _get_trace_optional(raw: RawRead, name: str, length: int) -> np.ndarray:
-    """Fetch a trace or return zeros if not saved in the raw file."""
-    try:
-        return _get_trace(raw, name)
-    except KeyError:
-        return np.zeros(length)
-
-
 def load_raw(
     raw_path: Path,
     signal_nodes: dict[str, str] | None = None,
     extra_probes: tuple[str, ...] | None = None,
 ) -> SimulationResult:
-    """Load ngspice raw file and extract probe voltages."""
-    raw = RawRead(str(raw_path))
+    """Load ngspice raw file and extract probe voltages.
+
+    Stage-declared probes (signal_nodes and extra_probes) must exist in the
+    raw file; a missing trace raises KeyError rather than silently plotting
+    zeros. Only the optional 'ref' node may be absent (tracked in
+    missing_probes).
+    """
+    raw = RawRead(str(raw_path), verbose=False)
     nodes = signal_nodes or {
         "in_p": "in_p",
         "in_n": "in_n",
@@ -95,20 +104,27 @@ def load_raw(
     in_p = _get_trace(raw, f"V({nodes['in_p']})")
     in_n = _get_trace(raw, f"V({nodes['in_n']})")
     out = _get_trace(raw, f"V({nodes['out']})")
-    ref = _get_trace_optional(raw, f"V({nodes.get('ref', 'ref')})", len(time_s))
+
+    missing_probes: set[str] = set()
+    ref_node = nodes.get("ref", "ref")
+    try:
+        ref = _get_trace(raw, f"V({ref_node})")
+    except KeyError:
+        ref = np.zeros(len(time_s))
+        missing_probes.add(ref_node)
 
     extra: dict[str, np.ndarray] = {}
     seen = set(nodes.values())
     for node in extra_probes or ():
         if node in seen:
             continue
-        extra[node] = _get_trace_optional(raw, f"V({node})", len(time_s))
+        extra[node] = _get_trace(raw, f"V({node})")
         seen.add(node)
 
     for logical, spice_node in nodes.items():
         if spice_node in extra or logical in ("in_p", "in_n", "out", "ref"):
             continue
-        extra[spice_node] = _get_trace_optional(raw, f"V({spice_node})", len(time_s))
+        extra[spice_node] = _get_trace(raw, f"V({spice_node})")
 
     return SimulationResult(
         time_s=time_s,
@@ -118,4 +134,5 @@ def load_raw(
         ref=ref,
         extra=extra,
         signal_nodes=nodes,
+        missing_probes=missing_probes,
     )

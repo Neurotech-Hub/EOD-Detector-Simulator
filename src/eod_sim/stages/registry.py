@@ -76,6 +76,13 @@ class Stage:
         nodes.update(self.extra_probes)
         return sorted(nodes)
 
+    def driven_nodes(self) -> tuple[str, str]:
+        """SPICE node pair driven directly by the stimulus filesource."""
+        if self.drive_mode == "electrodes":
+            return ("elec_a", "elec_b")
+        nodes = self.resolved_signal_nodes()
+        return (nodes["in_p"], nodes["in_n"])
+
 
 EOD_SIGNAL_NODES = {
     "elec_a": "elec_a",
@@ -84,7 +91,7 @@ EOD_SIGNAL_NODES = {
     "ina_n": "ina_n",
     "elec_out": "elec_out",
     "comp_in": "comp_in",
-    "comp_out": "comp_out",
+    "trigger": "trigger",
     "thresh": "thresh",
     "vref": "vref",
     "in_p": "ina_p",
@@ -161,8 +168,11 @@ STAGES: tuple[Stage, ...] = (
         default_vref=1.65,
         default_vdd=3.3,
         fixed_rg=True,
-        signal_nodes=dict(EOD_SIGNAL_NODES),
-        extra_probes=("elec_a", "elec_b", "comp_in", "trigger"),
+        # No comparator in stage 02: trigger/thresh nodes do not exist.
+        signal_nodes={
+            k: v for k, v in EOD_SIGNAL_NODES.items() if k not in ("trigger", "thresh")
+        },
+        extra_probes=("elec_a", "elec_b", "comp_in"),
         overview_input=("ina_p", "ina_n"),
         overview_output="elec_out",
         overview_bottom_mode="absolute",
@@ -187,12 +197,12 @@ STAGES: tuple[Stage, ...] = (
         fixed_rg=True,
         signal_nodes={
             **EOD_SIGNAL_NODES,
-            "out": "comp_out",
+            "out": "trigger",
             "ref": "vref",
         },
         extra_probes=("elec_a", "elec_b", "elec_out", "comp_in", "thresh", "trigger"),
         overview_input=("ina_p", "ina_n"),
-        overview_output="comp_out",
+        overview_output="trigger",
         overview_bottom_mode="absolute",
         pulse_zoom_left=("ina_p", "ina_n"),
         pulse_zoom_right="elec_out",

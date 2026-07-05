@@ -1,11 +1,12 @@
 # Stage 03 — Full detector
 
-Complete KiCad front-end: passives, INA333 (G=2), output filter, and MCP6561 comparator with fixed threshold.
+Complete KiCad front-end: passives, INA333 (G=2), output filter, and a behavioral MCP6561 comparator equivalent with fixed threshold.
 
 ## Simplifications
 
 - OPA333 reference buffer → ideal `VREF = 1.65 V`
-- Potentiometer divider → fixed `VTHRESH = 1.85 V` (tune with `--vthresh`)
+- RV1 potentiometer divider (R13/R17) → fixed `VTHRESH = 1.85 V` (tune with `--vthresh`)
+- MCP6561 → behavioral comparator (`eod_comparator_behavioral.inc`): threshold comparison, rail-to-rail push-pull output, and hysteresis from the physical R5/R9 network
 
 ## Run
 
@@ -15,9 +16,14 @@ python scripts/run_stage.py --stage 03_detector --model ti --waveform rounded
 python scripts/run_stage.py --stage 03_detector --waveform rounded --vthresh 1.70 --pulse-mv 50
 ```
 
-## TI bench
+## Benches
 
-The `ti` variant uses the vendor INA333 macromodel. Stage 03 also includes comparator stabilization (`eod_comparator_ti.inc`) and relaxed transient options (`sim_ti_transient.inc`) for ngspice convergence.
+Both variants use the behavioral comparator (`eod_comparator_behavioral.inc`) and converge deterministically:
+
+- `ideal` — ideal INA333 model
+- `ti` — TI INA333 vendor macromodel with relaxed transient options (`sim_ti_transient.inc`)
+
+The Microchip MCP6561 macromodel was **retired from these benches**: its ESD clamp diodes collapsed the ngspice timestep non-deterministically when cascaded with the INA333 macromodel (see [MCP6561.md](../../models/MCP6561.md)). Hysteresis behavior is unchanged — it comes from the physical R5/R9 network, which is fully modeled.
 
 ## Notes
 

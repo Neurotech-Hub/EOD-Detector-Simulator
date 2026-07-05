@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from eod_sim.comparator_network import ComparatorNetworkParams
 from eod_sim.input_network import InputNetworkParams
 from eod_sim.runner import RunConfig
 from eod_sim.stages.registry import Stage, get_stage
@@ -33,7 +34,7 @@ class GuiState:
     vref: float = 1.65
     vthresh: float = 1.85
     vdd: float = 3.3
-    gain: float = 100.0
+    gain: float = 2.0
     pulse_index: int = 0
     view_mode: ViewMode = "pulse"
     pulse_window_scale: float = 2.0
@@ -48,6 +49,9 @@ class GuiState:
     r_vref: str = "10Meg"
     r_diff: str = "1Meg"
     c_diff: str = "330p"
+    c_out: str = "2.2n"
+    r_comp: str = "4.7k"
+    r_hyst: str = "1Meg"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -76,6 +80,7 @@ class GuiState:
                 "vref": stage.default_vref,
                 "vthresh": stage.default_vthresh,
                 "vdd": stage.default_vdd,
+                "gain": default_ina_gain(stage_id),
             }
         )
 
@@ -111,7 +116,38 @@ class GuiState:
                 r_diff=self.r_diff,
                 c_diff=self.c_diff,
             ),
+            comparator_network=ComparatorNetworkParams(
+                c_out=self.c_out,
+                r_comp=self.r_comp,
+                r_hyst=self.r_hyst,
+            ),
         )
+
+
+def default_ina_gain(stage_id: str) -> float:
+    """Default INA333 gain (V/V) for a stage."""
+    stage = get_stage(stage_id)
+    if stage.patches_rg:
+        return 100.0
+    if stage.fixed_rg:
+        return 2.0
+    return 2.0
+
+
+def parse_ina_gain(value: object, default: int = 2) -> float:
+    """Parse integer INA333 gain; minimum 2 V/V for valid RG."""
+    gain = parse_int(value, default)
+    return float(max(gain, 2))
+
+
+def resolve_gui_gain(stage_id: str, ina_gain: object, sanity_gain: object) -> float:
+    """Pick gain from the visible control for the active stage."""
+    stage = get_stage(stage_id or "03_detector")
+    if stage.patches_rg:
+        return parse_float(sanity_gain, 100.0)
+    if stage.fixed_rg:
+        return parse_ina_gain(ina_gain, int(default_ina_gain(stage.id)))
+    return 2.0
 
 
 def stage_supports_tab(stage_id: str, tab: int) -> bool:
