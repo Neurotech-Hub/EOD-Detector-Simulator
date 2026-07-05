@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 
 from eod_sim.comparator_network import ComparatorNetworkParams
+from eod_sim.input_network import InputNetworkParams
 from eod_sim.runner import RunConfig, run_simulation
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -200,5 +201,66 @@ def test_ideal_bench_matches_detection(tmp_path):
     result = run_simulation(
         _detector_config(tmp_path, bench_variant="ideal"), PROJECT_ROOT
     )
+    assert result.quality is not None and result.quality.passed
+    assert _rising_edges(result) == 4
+
+
+def _passives_config(tmp_path: Path, mismatch_pct: float) -> RunConfig:
+    return RunConfig(
+        stage_id="01_passives",
+        bench_variant="default",
+        pulse_mv=300.0,
+        pulse_shape="rounded",
+        pulse_width_us=200.0,
+        isi_ms=2.0,
+        num_pulses=4,
+        duration_ms=20.0,
+        pulse_zoom=False,
+        output_root=tmp_path,
+        input_network=InputNetworkParams(electrode_mismatch_pct=mismatch_pct),
+    )
+
+
+def _lobe_ratio(result) -> float:
+    """|positive peak| / |negative peak| of the INA differential input."""
+    sim = result.simulation
+    ina = sim.diff_pair("ina_p", "ina_n")[sim.time_s >= 1e-3]
+    return float(ina.max() / abs(ina.min()))
+
+
+def test_electrode_mismatch_produces_lobe_asymmetry(tmp_path):
+    """20% electrode mismatch measurably skews the biphasic lobes at the
+    INA inputs vs the matched (stiff-drive) case, and attenuates the peak."""
+    baseline = run_simulation(_passives_config(tmp_path / "matched", 0.0), PROJECT_ROOT)
+    mismatched = run_simulation(
+        _passives_config(tmp_path / "mismatch", 20.0), PROJECT_ROOT
+    )
+    assert baseline.quality is not None and baseline.quality.passed
+    assert mismatched.quality is not None and mismatched.quality.passed
+
+    # The commanded stimulus is still faithful at the filesource nodes.
+    assert mismatched.quality.stimulus_max_error_mv is not None
+    assert mismatched.quality.stimulus_max_error_mv < 1.0
+
+    # Rs against the input network attenuates the in-band peak...
+    assert mismatched.peak_vin_mv < baseline.peak_vin_mv
+
+    # ...and unequal Rs skews the positive/negative lobe balance.
+    ratio_shift = abs(_lobe_ratio(mismatched) - _lobe_ratio(baseline))
+    assert ratio_shift > 0.01
+
+    # ELEC_A/ELEC_B now legitimately deviate from the commanded waveform.
+    sim = mismatched.simulation
+    src = sim.diff_pair("src_a", "src_b")
+    elec = sim.diff_pair("elec_a", "elec_b")
+    assert float(np.max(np.abs(src - elec))) * 1e3 > 1.0
+
+
+def test_electrode_mismatch_detector_still_triggers(tmp_path):
+    """The full detector still converges and triggers with the electrode
+    model enabled at 20% mismatch."""
+    config = _detector_config(tmp_path)
+    config.input_network = InputNetworkParams(electrode_mismatch_pct=20.0)
+    result = run_simulation(config, PROJECT_ROOT)
     assert result.quality is not None and result.quality.passed
     assert _rising_edges(result) == 4

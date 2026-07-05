@@ -63,6 +63,18 @@ def test_gui_state_input_network_mapping():
     assert cfg.input_network.r_vref == "5Meg"
     assert cfg.input_network.r_diff == "2Meg"
     assert cfg.input_network.c_diff == "100p"
+    assert cfg.input_network.electrode_mismatch_pct == 0.0
+
+
+def test_gui_state_electrode_mismatch_round_trip():
+    state = GuiState(electrode_mismatch_pct=20.0)
+    restored = GuiState.from_dict(state.to_dict())
+    assert restored.electrode_mismatch_pct == 20.0
+    cfg = restored.to_run_config()
+    assert cfg.input_network.electrode_mismatch_pct == 20.0
+    params = cfg.input_network.to_spice_params()
+    assert params["R_ELEC_A"] == "16500"
+    assert params["R_ELEC_B"] == "13500"
 
 
 def test_gui_state_comparator_network_mapping():
@@ -93,8 +105,56 @@ def test_parse_float_and_int():
 
 def test_default_ina_gain():
     assert default_ina_gain("00_sanity_ina333") == pytest.approx(100.0)
-    assert default_ina_gain("02_frontend") == pytest.approx(2.0)
-    assert default_ina_gain("03_detector") == pytest.approx(2.0)
+    assert default_ina_gain("02_frontend") == pytest.approx(3.0)
+    assert default_ina_gain("03_detector") == pytest.approx(3.0)
+
+
+def test_gui_state_recommended_defaults():
+    state = GuiState()
+    assert state.gain == pytest.approx(3.0)
+    assert state.c_diff == "47p"
+    assert state.c_out == "470p"
+
+
+def test_r3_display_for_gain():
+    from eod_sim.gui.state import r3_display_for_gain
+
+    assert r3_display_for_gain(3.0) == "50.0000k"
+    assert r3_display_for_gain(2.0) == "100.0000k"
+
+
+def test_format_settings_report():
+    from eod_sim.gui.state import format_settings_report, get_component_defaults
+
+    text = format_settings_report(GuiState())
+    assert "03_detector" in text
+    assert "component defaults: Ideal v3" in text
+    assert "C4=47p" in text
+    assert "C5=470p" in text
+    assert "gain: 3 V/V" in text
+    assert "R3 (RG) = 50.0000k" in text
+
+
+def test_component_defaults_presets():
+    from eod_sim.gui.state import NO_C4_DIFF, get_component_defaults
+
+    stock = get_component_defaults("detector_v3")
+    assert stock.label == "Detector v3"
+    assert stock.gain == pytest.approx(2.0)
+    assert stock.c_diff == "330p"
+    assert stock.c_out == "2.2n"
+
+    no_c4 = get_component_defaults("detector_v3_no_c4")
+    assert no_c4.label == "Detector v3 - No C4"
+    assert no_c4.gain == pytest.approx(2.0)
+    assert no_c4.c_diff == NO_C4_DIFF
+    assert no_c4.c_out == "2.2n"
+
+    ideal = get_component_defaults("ideal_v3")
+    assert ideal.label == "Ideal v3"
+    assert ideal.gain == pytest.approx(3.0)
+    assert ideal.c_diff == "47p"
+    assert ideal.c_out == "470p"
 
 
 def test_parse_ina_gain():

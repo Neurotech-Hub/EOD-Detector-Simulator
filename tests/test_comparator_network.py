@@ -5,7 +5,7 @@ from eod_sim.comparator_network import ComparatorNetworkParams, stage_has_compar
 
 def test_comparator_network_defaults():
     net = ComparatorNetworkParams()
-    assert net.c_out == "2.2n"
+    assert net.c_out == "470p"
     assert net.r_comp == "4.7k"
     assert net.r_hyst == "1Meg"
 

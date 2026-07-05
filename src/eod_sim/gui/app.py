@@ -10,11 +10,19 @@ from dash import Dash, Input, Output, State, callback, dcc, html, no_update
 
 from eod_sim.gui.state import (
     GuiState,
+    RECOMMENDED_C_DIFF,
+    RECOMMENDED_C_OUT,
+    RECOMMENDED_GAIN,
+    COMPONENT_DEFAULTS,
     default_ina_gain,
+    format_settings_report,
+    get_component_defaults,
     parse_float,
     parse_int,
+    parse_ina_gain,
     parse_optional_int,
     parse_spice_value,
+    r3_display_for_gain,
     resolve_gui_gain,
 )
 from eod_sim.gui.views import _empty_figure, build_all_figures
@@ -27,7 +35,34 @@ from eod_sim.stages.registry import get_stage, list_stages
 from eod_sim.validation import SimulationValidationError
 from eod_sim.waveforms import LFOffsetParams
 
-_INPUT_STYLE = {"width": "100%"}
+_INPUT_STYLE = {"width": "100%", "boxSizing": "border-box", "fontSize": "13px"}
+_DISABLED_INPUT_STYLE = {
+    **_INPUT_STYLE,
+    "backgroundColor": "#f3f4f6",
+    "color": "#555",
+    "cursor": "default",
+}
+_LABEL_STYLE = {"fontSize": "13px", "color": "#333", "alignSelf": "center"}
+_HINT_STYLE = {
+    "fontSize": "11px",
+    "color": "#666",
+    "margin": "2px 0 0 0",
+    "gridColumn": "1 / -1",
+}
+_CARD_STYLE = {
+    "border": "1px solid #e5e7eb",
+    "borderRadius": "6px",
+    "padding": "10px 12px",
+    "marginBottom": "12px",
+}
+_CARD_TITLE_STYLE = {
+    "fontSize": "11px",
+    "fontWeight": "600",
+    "textTransform": "uppercase",
+    "letterSpacing": "0.05em",
+    "color": "#555",
+    "margin": "0 0 8px 0",
+}
 
 
 def _runnable_stages():
@@ -66,6 +101,18 @@ def _spice_input(component_id: str, value: str) -> dcc.Input:
     )
 
 
+def _disabled_input(component_id: str, value: str) -> dcc.Input:
+    """Read-only display matching editable inputs."""
+    return dcc.Input(
+        id=component_id,
+        type="text",
+        value=value,
+        readOnly=True,
+        disabled=True,
+        style=_DISABLED_INPUT_STYLE,
+    )
+
+
 def _load_result(raw_path: str | None, stage_id: str) -> SimulationResult | None:
     if not raw_path:
         return None
@@ -83,6 +130,7 @@ def _load_result(raw_path: str | None, stage_id: str) -> SimulationResult | None
 def _gui_state_from_inputs(
     stage_id,
     bench_variant,
+    component_defaults,
     pulse_rate_khz,
     pulse_mv,
     pulse_shape,
@@ -99,6 +147,7 @@ def _gui_state_from_inputs(
     r_vref,
     r_diff,
     c_diff,
+    electrode_mismatch,
     c_out,
     r_comp,
     r_hyst,
@@ -111,9 +160,11 @@ def _gui_state_from_inputs(
 ) -> GuiState:
     enabled = bool(lf_offset_enabled) and "enabled" in (lf_offset_enabled or [])
     stage = get_stage(stage_id or "03_detector")
+    preset_id = component_defaults if component_defaults in COMPONENT_DEFAULTS else "ideal_v3"
     return GuiState(
         stage_id=stage_id or "03_detector",
         bench_variant=bench_variant or stage.default_bench,
+        component_defaults=preset_id,
         pulse_rate_khz=parse_float(pulse_rate_khz, 0.5),
         pulse_mv=parse_float(pulse_mv, 300.0),
         pulse_shape=pulse_shape or "rounded",
@@ -129,8 +180,9 @@ def _gui_state_from_inputs(
         r_series=parse_spice_value(r_series, "100k"),
         r_vref=parse_spice_value(r_vref, "10Meg"),
         r_diff=parse_spice_value(r_diff, "1Meg"),
-        c_diff=parse_spice_value(c_diff, "330p"),
-        c_out=parse_spice_value(c_out, "2.2n"),
+        c_diff=parse_spice_value(c_diff, RECOMMENDED_C_DIFF),
+        electrode_mismatch_pct=max(parse_float(electrode_mismatch, 0.0), 0.0),
+        c_out=parse_spice_value(c_out, RECOMMENDED_C_OUT),
         r_comp=parse_spice_value(r_comp, "4.7k"),
         r_hyst=parse_spice_value(r_hyst, "1Meg"),
         vref=parse_float(vref, 1.65),
@@ -150,38 +202,73 @@ def _state_for_plot(result_data: dict | None, live_state: GuiState) -> GuiState:
     return live_state
 
 
+def _field(label: str, control, hint: str | None = None) -> html.Div:
+    """Compact label/input row: label left, control right, optional hint below."""
+    children = [html.Label(label, style=_LABEL_STYLE), control]
+    if hint:
+        children.append(html.P(hint, style=_HINT_STYLE))
+    return html.Div(
+        style={
+            "display": "grid",
+            "gridTemplateColumns": "1.2fr 1fr",
+            "columnGap": "8px",
+            "alignItems": "center",
+            "marginBottom": "6px",
+        },
+        children=children,
+    )
+
+
+def _card(title: str, *children) -> html.Div:
+    """Bordered, always-open section card with an uppercase heading."""
+    return html.Div(
+        style=_CARD_STYLE,
+        children=[html.Div(title, style=_CARD_TITLE_STYLE), *children],
+    )
+
+
+def _note(text: str) -> html.P:
+    return html.P(text, style={"fontSize": "11px", "color": "#666", "margin": "0 0 6px 0"})
+
+
 def _control_block() -> html.Div:
     default_stage = get_stage("03_detector")
-    return html.Div(
-        id="sidebar",
-        style={
-            "width": "300px",
-            "padding": "16px",
-            "borderRight": "1px solid #ddd",
-            "overflowY": "auto",
-        },
-        children=[
-            html.H3("Controls"),
-            html.Label("Stage"),
-            dcc.Dropdown(id="stage-select", options=_stage_options(), value="03_detector"),
-            html.Br(),
-            html.Label("Bench"),
-            dcc.Dropdown(
-                id="bench-select",
-                options=_bench_options("03_detector"),
-                value=default_stage.default_bench,
-            ),
-            html.Hr(),
-            html.H4("Waveform"),
-            html.Label("Pulse rate (kHz)"),
-            _decimal_input("pulse-rate-khz", 0.5),
-            html.Br(),
-            html.Br(),
-            html.Label("Pulse amplitude (mV)"),
-            _decimal_input("pulse-mv", 300),
-            html.Br(),
-            html.Br(),
-            html.Label("Pulse shape"),
+
+    stage_bench_card = _card(
+        "Stage & Bench",
+        html.Label("Stage", style=_LABEL_STYLE),
+        dcc.Dropdown(
+            id="stage-select",
+            options=_stage_options(),
+            value="03_detector",
+            style={"marginBottom": "6px"},
+        ),
+        html.Label("Bench", style=_LABEL_STYLE),
+        dcc.Dropdown(
+            id="bench-select",
+            options=_bench_options("03_detector"),
+            value=default_stage.default_bench,
+            style={"marginBottom": "6px"},
+        ),
+        html.Label("Component defaults", style=_LABEL_STYLE),
+        dcc.Dropdown(
+            id="component-defaults",
+            options=[
+                {"label": "Detector v3", "value": "detector_v3"},
+                {"label": "Detector v3 - No C4", "value": "detector_v3_no_c4"},
+                {"label": "Ideal v3", "value": "ideal_v3"},
+            ],
+            value="ideal_v3",
+            clearable=False,
+        ),
+    )
+
+    waveform_card = _card(
+        "Waveform",
+        _field("Pulse rate (kHz)", _decimal_input("pulse-rate-khz", 0.5)),
+        _field("Pulse amplitude (mV)", _decimal_input("pulse-mv", 300)),
+        _field(
+            "Pulse shape",
             dcc.Dropdown(
                 id="pulse-shape",
                 options=[
@@ -189,43 +276,31 @@ def _control_block() -> html.Div:
                     {"label": "Square", "value": "square"},
                 ],
                 value="rounded",
+                clearable=False,
             ),
-            html.Br(),
-            html.Label("Pulse width (µs)"),
-            _decimal_input("pulse-width-us", 200),
-            html.Br(),
-            html.Br(),
-            html.Label("Num pulses"),
-            _decimal_input("num-pulses", 4),
-            html.Br(),
-            html.Br(),
-            html.Label("Duration (ms)"),
-            _decimal_input("duration-ms", 20),
-            html.Br(),
-            html.Br(),
-            dcc.Checklist(
-                id="lf-offset-enabled",
-                options=[{"label": " Slow water offset (~20 Hz)", "value": "enabled"}],
-                value=[],
-                style={"marginBottom": "8px"},
-            ),
-            html.Div(
-                id="lf-offset-controls",
-                style={"display": "none"},
-                children=[
-                    html.Label("LF offset amplitude (mV)"),
-                    _decimal_input("lf-offset-mv", 100),
-                    html.Br(),
-                    html.Br(),
-                    html.Label("LF center frequency (Hz)"),
-                    _decimal_input("lf-offset-center-hz", 20),
-                    html.Br(),
-                    html.Br(),
-                    html.Label("LF frequency span ± (Hz)"),
-                    _decimal_input("lf-offset-span-hz", 10),
-                    html.Br(),
-                    html.Br(),
-                    html.Label("LF seed (optional)"),
+        ),
+        _field("Pulse width (µs)", _decimal_input("pulse-width-us", 200)),
+        _field("Num pulses", _decimal_input("num-pulses", 4)),
+        _field("Duration (ms)", _decimal_input("duration-ms", 20)),
+    )
+
+    lf_offset_card = _card(
+        "Slow water offset",
+        dcc.Checklist(
+            id="lf-offset-enabled",
+            options=[{"label": " Slow water offset (~20 Hz)", "value": "enabled"}],
+            value=[],
+            style={"marginBottom": "6px", "fontSize": "13px"},
+        ),
+        html.Div(
+            id="lf-offset-controls",
+            style={"display": "none"},
+            children=[
+                _field("LF offset amplitude (mV)", _decimal_input("lf-offset-mv", 100)),
+                _field("LF center frequency (Hz)", _decimal_input("lf-offset-center-hz", 20)),
+                _field("LF frequency span ± (Hz)", _decimal_input("lf-offset-span-hz", 10)),
+                _field(
+                    "LF seed (optional)",
                     dcc.Input(
                         id="lf-offset-seed",
                         type="text",
@@ -234,129 +309,219 @@ def _control_block() -> html.Div:
                         debounce=True,
                         style=_INPUT_STYLE,
                     ),
-                    html.P(
-                        "Each run draws f in [center−span, center+span] and a random phase vs first pulse.",
-                        style={"fontSize": "12px", "color": "#666", "margin": "8px 0 0 0"},
-                    ),
-                ],
-            ),
-            html.Hr(),
-            html.H4("Circuit"),
-            html.Label("VREF (V)"),
-            _decimal_input("vref", 1.65),
-            html.Br(),
-            html.Br(),
-            html.Label("VTHRESH (V)"),
+                    hint="Each run draws f in [center−span, center+span] and a random phase vs first pulse.",
+                ),
+            ],
+        ),
+    )
+
+    voltages_card = _card(
+        "Circuit voltages",
+        _field("VREF (V)", _decimal_input("vref", 1.65)),
+        _field(
+            "VTHRESH (V)",
             _decimal_input("vthresh", 1.85),
-            html.P(
-                "On the board this is the RV1 trimmer wiper (R13/R17 divider).",
-                style={"fontSize": "12px", "color": "#666", "margin": "4px 0 0 0"},
-            ),
-            html.Br(),
-            html.Label("VDD (V)"),
-            _decimal_input("vdd", 3.3),
-            html.Div(
-                id="gain-control",
-                style={"display": "none"},
-                children=[
-                    html.Br(),
-                    html.Label("INA333 gain (V/V)"),
-                    _decimal_input("sanity-gain", 100),
-                ],
-            ),
-            html.Hr(),
-            html.Div(
-                id="input-network-panel",
-                children=[
-                    html.H4("INA input network"),
-                    html.Div(
-                        id="ina-gain-control",
-                        style={"display": "none"},
-                        children=[
-                            html.Label("INA333 gain (V/V)"),
-                            _decimal_input("ina-gain", 2),
-                            html.P(
-                                "Sets R3 (RG); G = 1 + 100k/RG. Minimum 2 V/V.",
-                                style={"fontSize": "12px", "color": "#666", "margin": "4px 0 8px 0"},
+            hint="On the board this is the RV1 trimmer wiper (R13/R17 divider).",
+        ),
+        _field("VDD (V)", _decimal_input("vdd", 3.3)),
+        html.Div(
+            id="gain-control",
+            style={"display": "none"},
+            children=[
+                _field("INA333 gain (V/V)", _decimal_input("sanity-gain", 100)),
+                _field(
+                    "R3 (RG)",
+                    _disabled_input("sanity-r3", r3_display_for_gain(100.0)),
+                    hint="Read-only; set by gain above.",
+                ),
+            ],
+        ),
+    )
+
+    input_network_panel = html.Div(
+        id="input-network-panel",
+        children=[
+            _card(
+                "INA input network",
+                html.Div(
+                    id="ina-gain-control",
+                    style={"display": "none"},
+                    children=[
+                        _field(
+                            "INA333 gain (V/V)",
+                            _decimal_input("ina-gain", int(RECOMMENDED_GAIN)),
+                            hint="Sets R3 (RG); G = 1 + 100k/RG. Minimum 2 V/V.",
+                        ),
+                        _field(
+                            "R3 (RG)",
+                            _disabled_input(
+                                "ina-r3", r3_display_for_gain(RECOMMENDED_GAIN)
                             ),
-                            html.Br(),
-                        ],
+                            hint="Read-only; patched into the netlist from gain.",
+                        ),
+                    ],
+                ),
+                _note("Symmetric per-leg values; SPICE units (n, k, Meg, p)."),
+                _field("Input coupling cap (C2/C3)", _spice_input("c-couple", "4.7n")),
+                _field("Series input resistor (R4/R7)", _spice_input("r-series", "100k")),
+                _field("VREF bias resistor (R6/R8)", _spice_input("r-vref", "10Meg")),
+                _field("Differential input resistor (R15)", _spice_input("r-diff", "1Meg")),
+                _field("Differential input capacitor (C4)", _spice_input("c-diff", RECOMMENDED_C_DIFF)),
+                _field(
+                    "Electrode mismatch (%)",
+                    _decimal_input("electrode-mismatch", 0),
+                    hint=(
+                        "0 = ideal stiff drive; >0 inserts Rs = 15 kΩ ± m/2 "
+                        "per electrode — see ELECTRODES.md."
                     ),
-                    html.P(
-                        "Symmetric per-leg values; SPICE units (n, k, Meg, p).",
-                        style={"fontSize": "12px", "color": "#666", "margin": "0 0 8px 0"},
-                    ),
-                    html.Label("Input coupling cap (C2/C3)"),
-                    _spice_input("c-couple", "4.7n"),
-                    html.Br(),
-                    html.Br(),
-                    html.Label("Series input resistor (R4/R7)"),
-                    _spice_input("r-series", "100k"),
-                    html.Br(),
-                    html.Br(),
-                    html.Label("VREF bias resistor (R6/R8)"),
-                    _spice_input("r-vref", "10Meg"),
-                    html.Br(),
-                    html.Br(),
-                    html.Label("Differential input resistor (R15)"),
-                    _spice_input("r-diff", "1Meg"),
-                    html.Br(),
-                    html.Br(),
-                    html.Label("Differential input capacitor (C4)"),
-                    _spice_input("c-diff", "330p"),
-                ],
-            ),
-            html.Hr(),
-            html.Div(
-                id="comparator-network-panel",
-                children=[
-                    html.H4("Comparator network"),
-                    html.P(
-                        "Output coupling and hysteresis; SPICE units (n, k, Meg).",
-                        style={"fontSize": "12px", "color": "#666", "margin": "0 0 8px 0"},
-                    ),
-                    html.Label("Output coupling cap (C5, VREF–ELEC_OUT)"),
-                    _spice_input("c-out", "2.2n"),
-                    html.Br(),
-                    html.Br(),
-                    html.Label("COMP_IN series resistor (R9)"),
-                    _spice_input("r-comp", "4.7k"),
-                    html.Div(
-                        id="r-hyst-control",
-                        children=[
-                            html.Br(),
-                            html.Label("Hysteresis resistor (R5, COMP_IN–TRIGGER)"),
-                            _spice_input("r-hyst", "1Meg"),
-                        ],
-                    ),
-                ],
-            ),
-            html.Hr(),
-            html.H4("View"),
-            dcc.RadioItems(
-                id="view-mode",
-                options=[
-                    {"label": " Overview ", "value": "overview"},
-                    {"label": " Single pulse ", "value": "pulse"},
-                ],
-                value="pulse",
-                inline=True,
-            ),
-            html.P(
-                "Single pulse: first pulse in the train; x-axis spans 2× pulse width.",
-                style={"fontSize": "12px", "color": "#666", "margin": "6px 0 12px 0"},
-            ),
-            html.Button("Run Simulation", id="run-button", n_clicks=0, style={"width": "100%"}),
-            dcc.Loading(
-                type="dot",
-                children=html.Div(
-                    id="status-line",
-                    style={"marginTop": "12px", "fontSize": "13px", "color": "#444"},
                 ),
             ),
+        ],
+    )
+
+    comparator_panel = html.Div(
+        id="comparator-network-panel",
+        children=[
+            _card(
+                "Comparator network",
+                _note("Output coupling and hysteresis; SPICE units (n, k, Meg)."),
+                _field("Output coupling cap (C5, VREF–ELEC_OUT)", _spice_input("c-out", RECOMMENDED_C_OUT)),
+                _field("COMP_IN series resistor (R9)", _spice_input("r-comp", "4.7k")),
+                html.Div(
+                    id="r-hyst-control",
+                    children=[
+                        _field(
+                            "Hysteresis resistor (R5, COMP_IN–TRIGGER)",
+                            _spice_input("r-hyst", "1Meg"),
+                        ),
+                    ],
+                ),
+            ),
+        ],
+    )
+
+    view_card = _card(
+        "View",
+        dcc.RadioItems(
+            id="view-mode",
+            options=[
+                {"label": " Overview ", "value": "overview"},
+                {"label": " Single pulse ", "value": "pulse"},
+            ],
+            value="pulse",
+            inline=True,
+            style={"fontSize": "13px"},
+        ),
+        html.P(
+            "Single pulse: first pulse in the train; x-axis spans 2× pulse width.",
+            style={"fontSize": "11px", "color": "#666", "margin": "4px 0 0 0"},
+        ),
+    )
+
+    # Left column = signal, right column = circuit.
+    left_column = html.Div(children=[stage_bench_card, waveform_card, lf_offset_card, view_card])
+    right_column = html.Div(
+        children=[voltages_card, input_network_panel, comparator_panel]
+    )
+
+    return html.Div(
+        id="sidebar",
+        style={
+            "width": "620px",
+            "flexShrink": 0,
+            "display": "flex",
+            "flexDirection": "column",
+            "borderRight": "1px solid #ddd",
+            "minHeight": 0,
+        },
+        children=[
             html.Div(
-                id="stage-mismatch-line",
-                style={"marginTop": "8px", "fontSize": "12px", "color": "#b45309"},
+                style={
+                    "flex": 1,
+                    "overflowY": "auto",
+                    "padding": "12px 16px",
+                    "display": "grid",
+                    "gridTemplateColumns": "1fr 1fr",
+                    "columnGap": "16px",
+                    "alignContent": "start",
+                },
+                children=[left_column, right_column],
+            ),
+            html.Div(
+                style={
+                    "padding": "10px 16px",
+                    "borderTop": "1px solid #ddd",
+                    "background": "#fafafa",
+                },
+                children=[
+                    html.Button(
+                        "Run Simulation", id="run-button", n_clicks=0, style={"width": "100%"}
+                    ),
+                    dcc.Loading(
+                        type="dot",
+                        children=html.Div(
+                            id="status-line",
+                            style={"marginTop": "8px", "fontSize": "13px", "color": "#444"},
+                        ),
+                    ),
+                    html.Div(
+                        id="metrics-line",
+                        style={"marginTop": "6px", "fontSize": "12px", "color": "#333"},
+                    ),
+                    html.Div(
+                        id="stage-mismatch-line",
+                        style={"marginTop": "6px", "fontSize": "12px", "color": "#b45309"},
+                    ),
+                    html.Div(
+                        id="settings-report",
+                        n_clicks=0,
+                        title="Click to copy settings report",
+                        style={
+                            "marginTop": "8px",
+                            "padding": "8px",
+                            "background": "#fff",
+                            "border": "1px solid #e5e7eb",
+                            "borderRadius": "4px",
+                            "cursor": "pointer",
+                            "fontSize": "11px",
+                            "fontFamily": "ui-monospace, SFMono-Regular, Menlo, monospace",
+                            "whiteSpace": "pre-wrap",
+                            "color": "#374151",
+                            "lineHeight": "1.45",
+                        },
+                        children=[
+                            html.Div(
+                                "Settings report — click to copy",
+                                style={
+                                    "fontSize": "10px",
+                                    "color": "#888",
+                                    "marginBottom": "4px",
+                                    "fontFamily": "system-ui, sans-serif",
+                                },
+                            ),
+                            html.Pre(
+                                id="settings-report-pre",
+                                style={
+                                    "margin": 0,
+                                    "fontSize": "inherit",
+                                    "fontFamily": "inherit",
+                                    "whiteSpace": "pre-wrap",
+                                },
+                            ),
+                        ],
+                    ),
+                    html.Span(
+                        id="copy-feedback",
+                        style={
+                            "fontSize": "11px",
+                            "color": "#059669",
+                            "marginTop": "4px",
+                            "display": "block",
+                            "minHeight": "14px",
+                        },
+                    ),
+                    dcc.Store(id="settings-report-text"),
+                ],
             ),
         ],
     )
@@ -395,7 +560,6 @@ def create_app(project_root: Path) -> Dash:
                                     id="main-plot", style={"height": "calc(100vh - 140px)"}
                                 ),
                             ),
-                            html.Div(id="metrics-line", style={"fontSize": "13px", "color": "#333", "marginTop": "8px"}),
                         ],
                     ),
                 ],
@@ -516,12 +680,115 @@ def create_app(project_root: Path) -> Dash:
         )
 
     @callback(
+        Output("ina-r3", "value"),
+        Input("ina-gain", "value"),
+    )
+    def update_ina_r3(ina_gain):
+        gain = parse_ina_gain(ina_gain, int(RECOMMENDED_GAIN))
+        return r3_display_for_gain(gain)
+
+    @callback(
+        Output("sanity-r3", "value"),
+        Input("sanity-gain", "value"),
+    )
+    def update_sanity_r3(sanity_gain):
+        gain = parse_float(sanity_gain, 100.0)
+        return r3_display_for_gain(max(gain, 2.0))
+
+    @callback(
+        Output("c-couple", "value"),
+        Output("r-series", "value"),
+        Output("r-vref", "value"),
+        Output("r-diff", "value"),
+        Output("c-diff", "value"),
+        Output("c-out", "value"),
+        Output("r-comp", "value"),
+        Output("r-hyst", "value"),
+        Output("ina-gain", "value"),
+        Output("sanity-gain", "value"),
+        Input("component-defaults", "value"),
+        prevent_initial_call=True,
+    )
+    def apply_component_defaults_preset(preset_id):
+        if not preset_id:
+            return tuple(no_update for _ in range(10))
+        preset = get_component_defaults(preset_id)
+        gain_str = str(int(preset.gain))
+        return (
+            preset.c_couple,
+            preset.r_series,
+            preset.r_vref,
+            preset.r_diff,
+            preset.c_diff,
+            preset.c_out,
+            preset.r_comp,
+            preset.r_hyst,
+            gain_str,
+            gain_str,
+        )
+
+    @callback(
+        Output("settings-report-pre", "children"),
+        Output("settings-report-text", "data"),
+        Input("stage-select", "value"),
+        Input("bench-select", "value"),
+        Input("component-defaults", "value"),
+        Input("pulse-rate-khz", "value"),
+        Input("pulse-mv", "value"),
+        Input("pulse-shape", "value"),
+        Input("pulse-width-us", "value"),
+        Input("num-pulses", "value"),
+        Input("duration-ms", "value"),
+        Input("lf-offset-enabled", "value"),
+        Input("lf-offset-mv", "value"),
+        Input("lf-offset-center-hz", "value"),
+        Input("lf-offset-span-hz", "value"),
+        Input("lf-offset-seed", "value"),
+        Input("c-couple", "value"),
+        Input("r-series", "value"),
+        Input("r-vref", "value"),
+        Input("r-diff", "value"),
+        Input("c-diff", "value"),
+        Input("electrode-mismatch", "value"),
+        Input("c-out", "value"),
+        Input("r-comp", "value"),
+        Input("r-hyst", "value"),
+        Input("vref", "value"),
+        Input("vthresh", "value"),
+        Input("vdd", "value"),
+        Input("ina-gain", "value"),
+        Input("sanity-gain", "value"),
+        Input("view-mode", "value"),
+    )
+    def update_settings_report(*args):
+        state = _gui_state_from_inputs(*args)
+        text = format_settings_report(state)
+        return text, text
+
+    app.clientside_callback(
+        """
+        function(n_clicks, text) {
+            if (!n_clicks || !text) {
+                return window.dash_clientside.no_update;
+            }
+            navigator.clipboard.writeText(text);
+            return "Copied to clipboard";
+        }
+        """,
+        Output("copy-feedback", "children"),
+        Input("settings-report", "n_clicks"),
+        State("settings-report-text", "data"),
+        prevent_initial_call=True,
+    )
+
+    @callback(
         Output("result-store", "data"),
         Output("status-line", "children"),
         Output("metrics-line", "children"),
         Input("run-button", "n_clicks"),
         State("stage-select", "value"),
         State("bench-select", "value"),
+        State("component-defaults", "value"),
         State("pulse-rate-khz", "value"),
         State("pulse-mv", "value"),
         State("pulse-shape", "value"),
@@ -538,6 +805,7 @@ def create_app(project_root: Path) -> Dash:
         State("r-vref", "value"),
         State("r-diff", "value"),
         State("c-diff", "value"),
+        State("electrode-mismatch", "value"),
         State("c-out", "value"),
         State("r-comp", "value"),
         State("r-hyst", "value"),
@@ -611,6 +879,11 @@ def create_app(project_root: Path) -> Dash:
                 f"  |  LF: {run_result.lf_offset.frequency_hz:.1f} Hz, "
                 f"φ={phase_deg:.0f}°, {run_result.lf_offset.amplitude_mv:g} mV"
             )
+        if state.electrode_mismatch_pct > 0:
+            status_text += (
+                f"  |  electrode model ON: Rs 15 kΩ, "
+                f"{state.electrode_mismatch_pct:g}% mismatch"
+            )
 
         children = [html.Span(status_text, style={"color": "green"})]
         if quality is not None:
@@ -627,6 +900,7 @@ def create_app(project_root: Path) -> Dash:
         Input("result-store", "data"),
         State("stage-select", "value"),
         State("bench-select", "value"),
+        State("component-defaults", "value"),
         State("pulse-rate-khz", "value"),
         State("pulse-mv", "value"),
         State("pulse-shape", "value"),
@@ -643,6 +917,7 @@ def create_app(project_root: Path) -> Dash:
         State("r-vref", "value"),
         State("r-diff", "value"),
         State("c-diff", "value"),
+        State("electrode-mismatch", "value"),
         State("c-out", "value"),
         State("r-comp", "value"),
         State("r-hyst", "value"),
@@ -659,6 +934,7 @@ def create_app(project_root: Path) -> Dash:
         result_data,
         stage_id,
         bench_variant,
+        component_defaults,
         pulse_rate_khz,
         pulse_mv,
         pulse_shape,
@@ -675,6 +951,7 @@ def create_app(project_root: Path) -> Dash:
         r_vref,
         r_diff,
         c_diff,
+        electrode_mismatch,
         c_out,
         r_comp,
         r_hyst,
@@ -687,6 +964,7 @@ def create_app(project_root: Path) -> Dash:
         live_state = _gui_state_from_inputs(
             stage_id,
             bench_variant,
+            component_defaults,
             pulse_rate_khz,
             pulse_mv,
             pulse_shape,
@@ -703,6 +981,7 @@ def create_app(project_root: Path) -> Dash:
             r_vref,
             r_diff,
             c_diff,
+            electrode_mismatch,
             c_out,
             r_comp,
             r_hyst,

@@ -31,9 +31,14 @@ already flagged in the README (C4 → **47 pF** recommendation still applies).
 2. **Slow drift / DC offset** — large for **bare Ag**; much smaller for **matched
    Ag/AgCl**.
 
-The sim today uses a **stiff differential source** on ELEC_A/ELEC_B
-(`circuits/stages/includes/eod_stimulus.inc`). It cannot represent per-electrode
-impedance, mismatch, or common-mode pickup.
+**Now live in the sim:** the stimulus
+(`circuits/stages/includes/eod_stimulus.inc`) drives stiff SRC_A/SRC_B
+nodes through per-electrode series resistors `R_ELEC_A/B`. The
+`--electrode-mismatch <pct>` flag (GUI: **Electrode mismatch (%)**) sets
+Rs = **15 kΩ ± m/2** per electrode (0 = stiff drive, model off). This
+captures the **resistive** effects above — in-band droop through C4 and
+one-sided lobe skew from unequal Rs. Cdl/Rct, drift, and common-mode
+pickup are still not represented (see below).
 
 ## Ag/AgCl wires — what changes
 
@@ -59,10 +64,15 @@ test, not SPICE.
 - **Worth one bounded pass:** mismatch × common-mode **margin** sweep, not “find
   the true Rs.”
 
-Proposed model (future pass):
+**Done (first slice):** per-electrode series **Rs with mismatch %**
+(`--electrode-mismatch`) is implemented — see README "Electrode impedance
+mismatch."
 
-- Replace stiff diff source with **CM source + differential (fish) source** +
-  per-electrode **Rs ∥ (Cdl + Rct)** with **mismatch %** on Rs/Cdl/Rct.
+Remaining for a future pass:
+
+- Replace the differential-only source with **CM source + differential
+  (fish) source** and extend each electrode to the full **Rs ∥ (Cdl +
+  Rct)** Randles branch with **mismatch %** on Cdl/Rct too.
 - **Bare Ag:** include slow drift source (mV, <1 Hz).
 - **Ag/AgCl:** low Rct (~5 kΩ), **no large drift**; add small **Vhalf offset
   mismatch** (±25 mV swept).

@@ -123,12 +123,38 @@ Tune the symmetric INA333 input passive network. Values are SPICE literals appli
 | `--r-vref` | `10Meg` | VREF bias resistor (R6, R8) |
 | `--r-diff` | `1Meg` | Differential input resistor (R15) |
 | `--c-diff` | `330p` | Differential input capacitor (C4) |
+| `--electrode-mismatch` | `0` | Electrode impedance mismatch (%) — see below |
 
 ```bash
 python scripts/run_stage.py --stage 01_passives --waveform rounded --c-couple 10n --r-series 47k
 ```
 
 The tuning GUI shows an **INA input network** panel for stages `01_passives`, `02_frontend`, and `03_detector`. Pair with `--lf-offset` and **Overview** view to validate HPF attenuation of slow water artifacts.
+
+### Electrode impedance mismatch (stages 01–03)
+
+`--electrode-mismatch <pct>` (GUI: **Electrode mismatch (%)** in the INA
+input network panel) inserts a per-electrode source resistance between the
+stimulus and `ELEC_A`/`ELEC_B`:
+
+- **0 (default):** ideal stiff drive (1 mΩ) — identical to the previous
+  behavior.
+- **m > 0:** enables the electrode model with nominal Rs = **15 kΩ** (fine
+  Ag wire, ~5 mm exposed, fresh water — see
+  [ELECTRODES.md](ELECTRODES.md)), split ±m/2 between the two electrodes:
+  `R_ELEC_A = 15k·(1 + m/200)`, `R_ELEC_B = 15k·(1 − m/200)`.
+
+This demonstrates the two in-band electrode effects from ELECTRODES.md
+within the current differential-stimulus architecture: **amplitude droop**
+(Rs against C4 forms a ~16 kHz corner at stock values) and **one-sided
+biphasic distortion** (unequal Rs against the C2/R4 vs C3/R7 legs skews the
+two lobes). With mismatch on, the dashed "Commanded stimulus (ideal)"
+overlay in the Electrodes tab visibly departs from the simulated electrode
+differential — physically this time, not numerically.
+
+```bash
+python scripts/run_stage.py --stage 01_passives --waveform rounded --pulse-mv 300 --electrode-mismatch 20
+```
 
 ### Comparator network (stages 02–03)
 
@@ -156,10 +182,12 @@ error instead of plotting misleading data.
   raises a clear error instead of hanging indefinitely.
 - The raw file must span the full requested duration, be strictly
   monotonic in time, dense enough to trust, and free of NaN/Inf.
-- **Stimulus fidelity:** the simulated electrode differential
-  (`ELEC_A − ELEC_B`) is compared against the commanded waveform; any
-  deviation above 1 mV fails the run. The stimulus is a stiff source, so
-  deviations indicate solver failure, never physical loading.
+- **Stimulus fidelity:** the differential at the filesource nodes
+  (`SRC_A − SRC_B`, upstream of the electrode model) is compared against
+  the commanded waveform; any deviation above 1 mV fails the run. The
+  filesource is stiff, so deviations indicate solver failure — while
+  `ELEC_A/ELEC_B` may legitimately deviate when electrode mismatch is
+  enabled.
 - The GUI overlays the **commanded stimulus (ideal)** as a dashed trace on
   the Electrodes tab, keeps the previous good result when a run fails, and
   shows amber warnings from the quality checks.
@@ -181,6 +209,7 @@ topology, so explored values transfer straight back to the PCB:
 | `--r-comp` | R9 | 4.7 kΩ |
 | `--r-hyst` | R5 | 1 MΩ |
 | `--vthresh` | RV1 wiper (R13 = 5.1 kΩ, R17 = 330 Ω divider) | 1.85 V default |
+| `--electrode-mismatch` | (environment: the electrodes/water, not a PCB part) | 0 % (model off) |
 
 The monostable network (R11/C6 pulse width, R14/C9, LEDs) is downstream of
 TRIGGER and not simulated.
@@ -192,20 +221,22 @@ From deterministic sweeps with 200 µs rounded biphasic pulses at 0.5 kHz
 
 | Designator | Stock | Suggestion | Why (measured in sim) |
 |------------|-------|------------|------------------------|
-| **C4** | 330 pF | **47 pF** | Biggest win. Against the ~166 kΩ differential source impedance (2·R4 ∥ R15), 330 pF puts the low-pass corner at ~3 kHz — inside the EOD band. A 200 µs pulse keeps only 47% of its peak (32% at 100 µs). 47 pF moves the corner to ~20 kHz: 78% / 73% preserved. This matches the observed "one side attenuates / distorts at higher frequencies." |
+| **C4** | 330 pF | **47 pF — do not go lower** | Biggest win. Against the ~166 kΩ differential source impedance (2·R4 ∥ R15), 330 pF puts the low-pass corner at ~3 kHz — inside the EOD band. A 200 µs pulse keeps only 47% of its peak (32% at 100 µs). 47 pF moves the corner to ~20 kHz: 78% / 73% preserved. **Below ~43 pF the front end self-oscillates at ~48 kHz with stock C5** — see [C4_STABILITY.md](C4_STABILITY.md). |
 | **R3** | 100 kΩ (G=2) | **51 kΩ (G≈3)** | At VTHRESH = 1.85 V, G=2 needs ≥300 mV pulses to trigger; G=3 detects 200 mV, and 100 mV once C4 = 47 pF. G=5 (RG = 24 kΩ) detects 100 mV even with stock C4 but eats headroom on large pulses. |
 | **C2, C3** | 4.7 nF | keep, or **2.2 nF** if slow drift dominates | 2.2 nF halves the 20–30 Hz bleed-through at the INA inputs (16% vs 32% residual) for only ~6% pulse-peak loss. Keep 4.7 nF if drift is not a problem in practice. |
-| **R9, C5** | 4.7 kΩ, 2.2 nF | keep | COMP_IN tracks ELEC_OUT faithfully across the R9 sweep (200 Ω – 4.7 kΩ all converge and trigger cleanly). No measured benefit to changing. |
+| **R9** | 4.7 kΩ | keep | COMP_IN tracks ELEC_OUT faithfully across the R9 sweep (200 Ω – 4.7 kΩ all converge and trigger cleanly). No measured benefit to changing. |
+| **C5** | 2.2 nF | **470 pF** | 2.2 nF directly loads the INA333 output and forms an under-damped ~48 kHz resonance; with C4 < ~43 pF (or fast input edges) the front end self-oscillates and TRIGGER chatters continuously — the "stuck on" signature. ≤ 1 nF removes the mechanism; 470 pF verified clean for all C4 down to 4.7 pF with identical gain and detection. Details: [C4_STABILITY.md](C4_STABILITY.md). |
 | **R5** | 1 MΩ | keep | Gives a ~15 mV hysteresis band: exactly one TRIGGER edge per pulse, no chatter, in every test. Going much smaller backfires — at 100 kΩ the R5 loading divides COMP_IN enough to raise the effective threshold and detection stops entirely. |
 | **RV1** (VTHRESH) | ~1.85 V | keep as trim | Margin table: at G=3 with C4 = 47 pF, 100 mV pulses clear 1.85 V. Trim down for weaker signals, up to reject noise. |
 
 Caveats, stated plainly:
 
 - These sweeps optimize **pulse fidelity, slow-drift rejection, and
-  threshold margin** against the commanded differential stimulus. The
-  suspected real-world failure modes involving **electrode impedance
-  mismatch, polarization, and common-mode pickup are not modeled yet** (see
-  Deferred below), so treat those aspects as unverified by simulation.
+  threshold margin** against the commanded differential stimulus. Resistive
+  **electrode impedance mismatch** can now be enabled
+  (`--electrode-mismatch`), but **polarization (double-layer C), half-cell
+  drift, and common-mode pickup are still not modeled** (see Deferred
+  below), so treat those aspects as unverified by simulation.
 - Combined check: with 100 mV LF drift superimposed on 300 mV pulse trains,
   both stock and suggested values produce exactly one trigger per pulse
   with zero drift-induced extras.
@@ -221,18 +252,18 @@ Caveats, stated plainly:
 | Ideal `VREF` source | Simplified | OPA333 reference buffer omitted ([stage 03 README](circuits/stages/03_detector/README.md)). |
 | Ideal `VTHRESH` source | Simplified | RV1 potentiometer divider replaced by a fixed source (`--vthresh`); keep suggested thresholds within RV1's achievable range. |
 | `sim_ti_transient.inc` options | Solver tuning | `method=gear`, relaxed tolerances, `TMAX=10u` for the TI INA333 macromodel. |
-| XSPICE `filesource` stimulus | Sim input | Stiff voltage source pair on ELEC_A/ELEC_B; cannot be loaded by the circuit. |
+| XSPICE `filesource` stimulus | Sim input | Stiff voltage source pair on SRC_A/SRC_B; cannot be loaded by the circuit. `R_ELEC_A/B` (electrode mismatch model) sit between the source and ELEC_A/ELEC_B. |
 
-### Deferred: electrode impedance and common-mode (CM-to-DM) modeling
+### Deferred: electrode polarization and common-mode (CM-to-DM) modeling
 
-The stimulus drives `ELEC_A/ELEC_B` as one stiff differential source, so
-**electrode material/polarization, electrode impedance mismatch, and
-common-mode-to-differential conversion cannot be represented yet**. Those
-are leading suspects for the real-world continuous triggering and one-sided
-waveform issues; optimizing component values against them requires adding a
-per-electrode impedance model (series R + double-layer C with mismatch) and
-a separate common-mode/gradient source in a future pass. Design notes for
-bare Ag vs Ag/AgCl and what to model: [ELECTRODES.md](ELECTRODES.md).
+**Resistive electrode mismatch is now modeled** via
+`--electrode-mismatch` / the GUI's Electrode mismatch (%) control (per-
+electrode series Rs = 15 kΩ ± m/2 between the source and
+`ELEC_A/ELEC_B`). Still deferred: **electrode polarization (double-layer
+capacitance), half-cell potential drift, and a separate common-mode /
+gradient source for CM-to-DM conversion** — the remaining suspects for the
+real-world continuous triggering issue. Design notes for bare Ag vs
+Ag/AgCl and what to model next: [ELECTRODES.md](ELECTRODES.md).
 
 ### Detector convergence
 

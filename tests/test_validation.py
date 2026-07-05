@@ -20,6 +20,8 @@ def _result_for(stage_id: str, time_s: np.ndarray, diff: np.ndarray) -> Simulati
         out=np.full(n, 1.65),
         ref=np.full(n, 1.65),
         extra={
+            "src_a": elec_a,
+            "src_b": elec_b,
             "elec_a": elec_a,
             "elec_b": elec_b,
             "elec_out": np.full(n, 1.65),

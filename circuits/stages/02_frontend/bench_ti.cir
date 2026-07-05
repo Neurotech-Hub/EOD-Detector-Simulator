@@ -17,11 +17,13 @@
 .param C_DIFF=330p
 .param C_OUT=2.2n
 .param R_COMP=4.7k
+.param R_ELEC_A=1m
+.param R_ELEC_B=1m
 .param RGVAL=100k
 .param TSTEP=1u
 .param TSTOP=100m
 
 .tran {TSTEP} {TSTOP} 0 {TMAX}
-.save v(elec_a) v(elec_b) v(ina_p) v(ina_n) v(elec_out) v(comp_in) v(vref)
+.save v(src_a) v(src_b) v(elec_a) v(elec_b) v(ina_p) v(ina_n) v(elec_out) v(comp_in) v(vref)
 
 .end

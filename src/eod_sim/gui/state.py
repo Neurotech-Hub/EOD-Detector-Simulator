@@ -6,16 +6,89 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from eod_sim.comparator_network import ComparatorNetworkParams
-from eod_sim.input_network import InputNetworkParams
+from eod_sim.comparator_network import ComparatorNetworkParams, stage_has_comparator_network
+from eod_sim.input_network import InputNetworkParams, stage_has_input_network
 from eod_sim.runner import RunConfig
 from eod_sim.stages.registry import Stage, get_stage
-from eod_sim.waveforms import isi_ms_from_khz
+from eod_sim.waveforms import format_rg_spice, gain_to_rg, isi_ms_from_khz
 
 ViewMode = Literal["overview", "pulse"]
 PulseShape = Literal["square", "rounded"]
+ComponentDefaultsId = Literal["detector_v3", "detector_v3_no_c4", "ideal_v3"]
 
 GUI_TUNING_STAGES = ("02_frontend", "03_detector")
+
+# Sim-derived recommended values (README + C4_STABILITY.md).
+RECOMMENDED_GAIN = 3.0
+RECOMMENDED_C_DIFF = "47p"
+RECOMMENDED_C_OUT = "470p"
+
+# KiCad EOD_Detector_v3-1 stock (R3 = 100k → G = 2).
+DETECTOR_V3_GAIN = 2.0
+
+# Absent C4: 1 fF is effectively an open between INA+ and INA− in transient sims.
+NO_C4_DIFF = "1f"
+
+
+@dataclass(frozen=True)
+class ComponentDefaultsPreset:
+    """Board or sim-recommended passive/network values."""
+
+    label: str
+    gain: float
+    c_couple: str
+    r_series: str
+    r_vref: str
+    r_diff: str
+    c_diff: str
+    c_out: str
+    r_comp: str
+    r_hyst: str
+
+
+COMPONENT_DEFAULTS: dict[str, ComponentDefaultsPreset] = {
+    "detector_v3": ComponentDefaultsPreset(
+        label="Detector v3",
+        gain=DETECTOR_V3_GAIN,
+        c_couple="4.7n",
+        r_series="100k",
+        r_vref="10Meg",
+        r_diff="1Meg",
+        c_diff="330p",
+        c_out="2.2n",
+        r_comp="4.7k",
+        r_hyst="1Meg",
+    ),
+    "detector_v3_no_c4": ComponentDefaultsPreset(
+        label="Detector v3 - No C4",
+        gain=DETECTOR_V3_GAIN,
+        c_couple="4.7n",
+        r_series="100k",
+        r_vref="10Meg",
+        r_diff="1Meg",
+        c_diff=NO_C4_DIFF,
+        c_out="2.2n",
+        r_comp="4.7k",
+        r_hyst="1Meg",
+    ),
+    "ideal_v3": ComponentDefaultsPreset(
+        label="Ideal v3",
+        gain=RECOMMENDED_GAIN,
+        c_couple="4.7n",
+        r_series="100k",
+        r_vref="10Meg",
+        r_diff="1Meg",
+        c_diff=RECOMMENDED_C_DIFF,
+        c_out=RECOMMENDED_C_OUT,
+        r_comp="4.7k",
+        r_hyst="1Meg",
+    ),
+}
+
+
+def get_component_defaults(preset_id: str) -> ComponentDefaultsPreset:
+    """Return a component-defaults preset; unknown ids fall back to Ideal v3."""
+    return COMPONENT_DEFAULTS.get(preset_id, COMPONENT_DEFAULTS["ideal_v3"])
 
 
 @dataclass
@@ -24,6 +97,7 @@ class GuiState:
 
     stage_id: str = "03_detector"
     bench_variant: str = "ti"
+    component_defaults: ComponentDefaultsId = "ideal_v3"
     pulse_rate_khz: float = 0.5
     pulse_mv: float = 300.0
     pulse_shape: PulseShape = "rounded"
@@ -34,7 +108,7 @@ class GuiState:
     vref: float = 1.65
     vthresh: float = 1.85
     vdd: float = 3.3
-    gain: float = 2.0
+    gain: float = RECOMMENDED_GAIN
     pulse_index: int = 0
     view_mode: ViewMode = "pulse"
     pulse_window_scale: float = 2.0
@@ -48,8 +122,9 @@ class GuiState:
     r_series: str = "100k"
     r_vref: str = "10Meg"
     r_diff: str = "1Meg"
-    c_diff: str = "330p"
-    c_out: str = "2.2n"
+    c_diff: str = RECOMMENDED_C_DIFF
+    electrode_mismatch_pct: float = 0.0
+    c_out: str = RECOMMENDED_C_OUT
     r_comp: str = "4.7k"
     r_hyst: str = "1Meg"
 
@@ -115,6 +190,7 @@ class GuiState:
                 r_vref=self.r_vref,
                 r_diff=self.r_diff,
                 c_diff=self.c_diff,
+                electrode_mismatch_pct=self.electrode_mismatch_pct,
             ),
             comparator_network=ComparatorNetworkParams(
                 c_out=self.c_out,
@@ -130,8 +206,58 @@ def default_ina_gain(stage_id: str) -> float:
     if stage.patches_rg:
         return 100.0
     if stage.fixed_rg:
-        return 2.0
-    return 2.0
+        return RECOMMENDED_GAIN
+    return RECOMMENDED_GAIN
+
+
+def r3_spice_for_gain(gain: float) -> str:
+    """SPICE literal for R3 (RG) at the given INA333 gain."""
+    return format_rg_spice(gain_to_rg(gain))
+
+
+def r3_display_for_gain(gain: float) -> str:
+    """Human-readable R3 value for the GUI readout."""
+    return r3_spice_for_gain(gain)
+
+
+def format_settings_report(state: GuiState) -> str:
+    """Plain-text summary of current simulator settings (click-to-copy)."""
+    lines = [
+        "EOD Detector — simulation settings",
+        f"stage: {state.stage_id}  bench: {state.bench_variant}",
+        f"component defaults: {get_component_defaults(state.component_defaults).label}",
+        (
+            f"waveform: {state.pulse_mv:g} mV  {state.pulse_shape}  "
+            f"{state.pulse_rate_khz:g} kHz  {state.pulse_width_us:g} µs × "
+            f"{state.num_pulses}  duration {state.duration_ms:g} ms"
+        ),
+    ]
+    if state.lf_offset_enabled:
+        seed = state.lf_offset_seed if state.lf_offset_seed is not None else "random"
+        lines.append(
+            f"LF offset: {state.lf_offset_amplitude_mv:g} mV  "
+            f"{state.lf_offset_center_hz:g}±{state.lf_offset_span_hz:g} Hz  seed={seed}"
+        )
+    stage = state.stage()
+    if stage.patches_rg or stage.fixed_rg:
+        lines.append(
+            f"gain: {state.gain:g} V/V  R3 (RG) = {r3_display_for_gain(state.gain)}"
+        )
+    lines.append(
+        f"VREF={state.vref:g} V  VTHRESH={state.vthresh:g} V  VDD={state.vdd:g} V"
+    )
+    if stage_has_input_network(state.stage_id):
+        lines.append(
+            f"input network: C2/C3={state.c_couple}  R4/R7={state.r_series}  "
+            f"R6/R8={state.r_vref}  R15={state.r_diff}  C4={state.c_diff}"
+        )
+        if state.electrode_mismatch_pct > 0:
+            lines.append(f"electrode mismatch: {state.electrode_mismatch_pct:g} %")
+    if stage_has_comparator_network(state.stage_id):
+        r5 = f"  R5={state.r_hyst}" if state.stage_id == "03_detector" else ""
+        lines.append(f"comparator network: C5={state.c_out}  R9={state.r_comp}{r5}")
+    lines.append(f"view: {state.view_mode}")
+    return "\n".join(lines)
 
 
 def parse_ina_gain(value: object, default: int = 2) -> float:

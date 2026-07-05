@@ -9,7 +9,9 @@ def test_input_network_defaults():
     assert net.r_series == "100k"
     assert net.r_vref == "10Meg"
     assert net.r_diff == "1Meg"
-    assert net.c_diff == "330p"
+    assert net.c_diff == "47p"
+    assert net.electrode_mismatch_pct == 0.0
+    assert not net.electrode_model_enabled
 
 
 def test_to_spice_params():
@@ -19,7 +21,28 @@ def test_to_spice_params():
     assert params["R_SERIES"] == "47k"
     assert params["R_VREF"] == "10Meg"
     assert params["R_DIFF"] == "1Meg"
-    assert params["C_DIFF"] == "330p"
+    assert params["C_DIFF"] == "47p"
+
+
+def test_electrode_model_off_is_stiff_drive():
+    params = InputNetworkParams().to_spice_params()
+    assert params["R_ELEC_A"] == "1m"
+    assert params["R_ELEC_B"] == "1m"
+
+
+def test_electrode_mismatch_splits_rs():
+    net = InputNetworkParams(electrode_mismatch_pct=20.0)
+    assert net.electrode_model_enabled
+    params = net.to_spice_params()
+    # Rs = 15k ± m/2: 20% mismatch -> ±10% -> 16.5k / 13.5k.
+    assert params["R_ELEC_A"] == "16500"
+    assert params["R_ELEC_B"] == "13500"
+
+
+def test_electrode_mismatch_small_value():
+    r_a, r_b = InputNetworkParams(electrode_mismatch_pct=1.0).electrode_resistances()
+    assert r_a == "15075"
+    assert r_b == "14925"
 
 
 def test_stage_has_input_network():

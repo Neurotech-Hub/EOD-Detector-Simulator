@@ -12,10 +12,12 @@
 .param R_VREF=10Meg
 .param R_DIFF=1Meg
 .param C_DIFF=330p
+.param R_ELEC_A=1m
+.param R_ELEC_B=1m
 .param TSTEP=1u
 .param TSTOP=100m
 
 .tran {TSTEP} {TSTOP}
-.save v(elec_a) v(elec_b) v(ina_p) v(ina_n) v(vref)
+.save v(src_a) v(src_b) v(elec_a) v(elec_b) v(ina_p) v(ina_n) v(vref)
 
 .end

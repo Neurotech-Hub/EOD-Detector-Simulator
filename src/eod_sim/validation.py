@@ -118,7 +118,10 @@ def _check_stimulus_fidelity(
     waveform: WaveformResult,
     errors: list[str],
 ) -> float | None:
-    pos, neg = stage.driven_nodes()
+    # Verify at the filesource nodes (SRC_A/SRC_B), upstream of the
+    # electrode impedance model: ELEC_A/ELEC_B may legitimately deviate
+    # from the commanded waveform when electrode mismatch is enabled.
+    pos, neg = stage.stimulus_source_nodes()
     try:
         measured = result.diff_pair(pos, neg)
     except KeyError:

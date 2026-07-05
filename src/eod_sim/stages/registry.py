@@ -77,11 +77,23 @@ class Stage:
         return sorted(nodes)
 
     def driven_nodes(self) -> tuple[str, str]:
-        """SPICE node pair driven directly by the stimulus filesource."""
+        """SPICE node pair driven by the stimulus (after electrode model)."""
         if self.drive_mode == "electrodes":
             return ("elec_a", "elec_b")
         nodes = self.resolved_signal_nodes()
         return (nodes["in_p"], nodes["in_n"])
+
+    def stimulus_source_nodes(self) -> tuple[str, str]:
+        """SPICE node pair the filesource drives stiffly.
+
+        For electrode stages this is SRC_A/SRC_B, upstream of the
+        R_ELEC_A/R_ELEC_B electrode model — the right place to verify
+        stimulus fidelity, since ELEC_A/ELEC_B may legitimately deviate
+        when electrode impedance is enabled.
+        """
+        if self.drive_mode == "electrodes":
+            return ("src_a", "src_b")
+        return self.driven_nodes()
 
 
 EOD_SIGNAL_NODES = {
@@ -146,7 +158,7 @@ STAGES: tuple[Stage, ...] = (
             "out": "ina_p",
             "ref": "vref",
         },
-        extra_probes=("elec_a", "elec_b"),
+        extra_probes=("src_a", "src_b", "elec_a", "elec_b"),
         overview_input=("elec_a", "elec_b"),
         overview_output=("ina_p", "ina_n"),
         overview_bottom_mode="diff",
@@ -172,7 +184,7 @@ STAGES: tuple[Stage, ...] = (
         signal_nodes={
             k: v for k, v in EOD_SIGNAL_NODES.items() if k not in ("trigger", "thresh")
         },
-        extra_probes=("elec_a", "elec_b", "comp_in"),
+        extra_probes=("src_a", "src_b", "elec_a", "elec_b", "comp_in"),
         overview_input=("ina_p", "ina_n"),
         overview_output="elec_out",
         overview_bottom_mode="absolute",
@@ -200,7 +212,7 @@ STAGES: tuple[Stage, ...] = (
             "out": "trigger",
             "ref": "vref",
         },
-        extra_probes=("elec_a", "elec_b", "elec_out", "comp_in", "thresh", "trigger"),
+        extra_probes=("src_a", "src_b", "elec_a", "elec_b", "elec_out", "comp_in", "thresh", "trigger"),
         overview_input=("ina_p", "ina_n"),
         overview_output="trigger",
         overview_bottom_mode="absolute",

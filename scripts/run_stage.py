@@ -157,6 +157,15 @@ def parse_args() -> argparse.Namespace:
         help="Differential input cap SPICE value (C4); default 330p",
     )
     parser.add_argument(
+        "--electrode-mismatch",
+        type=float,
+        default=None,
+        help=(
+            "Electrode impedance mismatch (%%). 0 = ideal stiff drive; >0 "
+            "inserts Rs = 15k ± m/2 per electrode (see ELECTRODES.md)"
+        ),
+    )
+    parser.add_argument(
         "--c-out",
         default=None,
         help="Output coupling cap SPICE value (C5); default 2.2n",
@@ -186,6 +195,8 @@ def _input_network_from_args(args: argparse.Namespace) -> InputNetworkParams:
         net.r_diff = args.r_diff
     if args.c_diff is not None:
         net.c_diff = args.c_diff
+    if args.electrode_mismatch is not None:
+        net.electrode_mismatch_pct = args.electrode_mismatch
     return net
 
 
@@ -246,6 +257,12 @@ def main() -> int:
             f"C_COUPLE={net.c_couple}  R_SERIES={net.r_series}  "
             f"R_VREF={net.r_vref}  R_DIFF={net.r_diff}  C_DIFF={net.c_diff}"
         )
+        if net.electrode_model_enabled:
+            r_a, r_b = net.electrode_resistances()
+            print(
+                f"Electrode model: mismatch {net.electrode_mismatch_pct:g}%  "
+                f"R_ELEC_A={r_a}  R_ELEC_B={r_b}"
+            )
 
     if stage_has_comparator_network(args.stage):
         comp = _comparator_network_from_args(args)
