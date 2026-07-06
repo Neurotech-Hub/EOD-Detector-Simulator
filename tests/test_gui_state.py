@@ -113,7 +113,7 @@ def test_gui_state_recommended_defaults():
     state = GuiState()
     assert state.gain == pytest.approx(3.0)
     assert state.c_diff == "47p"
-    assert state.c_out == "470p"
+    assert state.c_out == "1f"
 
 
 def test_r3_display_for_gain():
@@ -130,7 +130,7 @@ def test_format_settings_report():
     assert "03_detector" in text
     assert "component defaults: Ideal v3" in text
     assert "C4=47p" in text
-    assert "C5=470p" in text
+    assert "C5=1f" in text
     assert "gain: 3 V/V" in text
     assert "R3 (RG) = 50.0000k" in text
 
@@ -154,7 +154,7 @@ def test_component_defaults_presets():
     assert ideal.label == "Ideal v3"
     assert ideal.gain == pytest.approx(3.0)
     assert ideal.c_diff == "47p"
-    assert ideal.c_out == "470p"
+    assert ideal.c_out == "1f"
 
 
 def test_parse_ina_gain():

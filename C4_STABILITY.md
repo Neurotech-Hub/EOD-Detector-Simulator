@@ -110,6 +110,30 @@ removing the comparator changes nothing.
 
 
 
+## Bench confirmation (Jul 2026)
+
+The predicted oscillation was observed directly on hardware: with
+C5 = 2.2 nF and R9 = 10 kΩ (R5 = 1 MΩ), ELEC_OUT showed a sustained
+**~80 kHz, ~220 mV pk-pk ring**; **removing C5 eliminated it entirely.**
+This is the mechanism above, not the comparator — the sim reproduces the
+oscillation in stage 02 with no comparator populated at all. The
+frequency shift (sim ~48 kHz → bench ~80 kHz) is expected per the caveats:
+the resonance is set by the real part's closed-loop output impedance,
+which the TI macromodel only approximates.
+
+Note that **R9 does not protect the amplifier**: C5 is a *shunt* from
+ELEC_OUT to VREF, directly on U6's output, upstream of R9. Raising R9
+changes the hysteresis divider but leaves the amp facing the full C5.
+
+Follow-up sims with **C5 removed** (open) at R9 = 10 kΩ: detection is
+identical to C5 = 470 pF in every case tested — 4 clean TRIGGER edges for
+rounded and square 300 mV pulses and for near-threshold 120 mV pulses.
+C5 contributes nothing measurable to detection; the signal is already
+band-limited by C4 (~20 kHz) and the INA's closed-loop bandwidth
+(~115 kHz at G = 3), and chatter immunity comes from the R5/R9
+hysteresis, not from C5. **Revised recommendation: delete C5, or keep at
+most 470 pF (C0G) as EMI insurance.**
+
 ## Tank relevance ("comparator stuck on")
 
 Bench tests with **C4 absent** (populated footprint, no cap) reproduced the
@@ -136,19 +160,21 @@ board may be **more** susceptible than the sim:
 1. **Never go below C4 = 47 pF** with the stock output network. The
   simulated boundary is 43→39 pF for rounded 200 µs pulses, and moves up
    to ~68–100 pF for fast-edged (square) inputs — 47 pF has thin margin.
-2. **Change C5 from 2.2 nF to 470 pF** (standard value; ≤ 1 nF suffices in
-  sim). This removes the oscillation mechanism outright, decouples the C4
-   choice from stability, and preserves detection and measured gain
-   exactly (verified at gain 3, including square-pulse stress).
+2. **Delete C5, or keep at most 470 pF (C0G).** Bench-confirmed: removing
+   C5 eliminates the oscillation, and sims show detection is identical
+   with C5 open vs 470 pF (rounded, square, and near-threshold pulses).
+   Its intended filtering is redundant (C4 + amp bandwidth already
+   band-limit the path) and it sits on the wrong side of R9 to protect
+   COMP_IN. Never populate nF-scale values here.
 3. Recommended combo, superseding the "keep C5" line in the README's
-  suggested-values table: **gain ≈ 3 (R3 = 51 kΩ), C4 = 47 pF,
-   C5 = 470 pF**, R5/R9 stock. R5 is not a lever here — extra hysteresis
-   does not stop the oscillation.
-4. **Bench verification:** scope U6's output (ELEC_OUT) during a stuck-on
-  event and look for a continuous tens-of-kHz oscillation. If present,
-   the C5 reduction is the value-change-only fix; a series isolation
-   resistor between U6's output and C5 would be the topology-level fix on
-   a future board revision.
+   suggested-values table: **gain ≈ 3 (R3 = 51 kΩ), C4 = 47 pF,
+   C5 removed (or ≤ 470 pF)**, R5/R9 stock. R5 is not a lever here —
+   extra hysteresis does not stop the oscillation. R9 stays regardless:
+   it forms the hysteresis divider with R5.
+4. **Bench verification:** done — see *Bench confirmation* above. A
+   series isolation resistor between U6's output and the C5 position
+   remains the topology-level fix on a future board revision if a cap is
+   ever wanted there.
 
 
 

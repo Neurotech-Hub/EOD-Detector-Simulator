@@ -81,11 +81,13 @@ this campaign.
 
 | Part | Value (stock) | Purpose |
 |------|---------------|---------|
-| C5 | 2.2 nF | AC-couples ELEC_OUT to the comparator side, re-centered on VREF |
+| C5 | 2.2 nF | **Shunt** from ELEC_OUT to VREF — intended as a noise snubber on the comparator path |
 | R9 | 4.7 kΩ | Series element into COMP_IN; with R5 sets the hysteresis divider |
 
-C5 sits **directly on the INA output** — the single most consequential
-placement on the board (see §3).
+C5 sits **directly on the INA output** (upstream of R9, so R9 cannot
+isolate the amp from it) — the single most consequential placement on the
+board (see §3). Bench + sim verdict: its filtering job is already done by
+C4 and the amp's own bandwidth, so it should be deleted or kept ≤ 470 pF.
 
 ### Detection (U3 MCP6561, RV1 + R13/R17, R5)
 
@@ -118,10 +120,16 @@ does — including 47 kHz chatter.
    band-limits the edges reaching the amplifier and keeps the resonance
    damped. That's why the board "worked" at 330 pF and failed with C4
    absent.
-3. **C5 = 470 pF removes the failure mode outright.** Verified clean for
-   every C4 down to 4.7 pF, identical gain and detection, passes
-   square-pulse stress. This one value change decouples C4 choice from
-   stability.
+3. **C5 is not worth keeping — bench-confirmed.** With C5 = 2.2 nF
+   (R9 = 10 kΩ) the bench showed a sustained ~80 kHz, ~220 mV pk-pk ring
+   at ELEC_OUT; removing C5 eliminated it, matching the sim's predicted
+   mechanism (sim frequency ~48 kHz — the difference is the macromodel's
+   approximate output impedance). Sims with C5 open are identical to
+   470 pF for detection (rounded, square, near-threshold). Its filtering
+   is redundant: C4 (~20 kHz) and the INA's closed-loop bandwidth
+   (~115 kHz at G = 3) already band-limit the path, and chatter immunity
+   comes from R5/R9 hysteresis. Delete it, or keep ≤ 470 pF as EMI
+   insurance. R9 stays — it is load-bearing for hysteresis.
 4. **Detection margin wants G ≈ 3 and C4 = 47 pF.** At VTHRESH = 1.85 V:
    stock (G=2, C4=330p) needs ≥300 mV pulses; the recommended combo
    detects 100 mV pulses with in-band fidelity preserved (~78% of peak
@@ -149,22 +157,25 @@ parts (C0G/NP0 ceramics, E24 1% resistors) available from any distributor.
 
 | Change | From → To | Why |
 |--------|-----------|-----|
-| **C5** | 2.2 nF → **470 pF** (C0G) | Removes the oscillation mechanism entirely; the single highest-value change on the board |
+| **C5** | 2.2 nF → **removed** (or ≤ 470 pF C0G) | Bench-confirmed oscillator (80 kHz ring at ELEC_OUT; gone with C5 out). Detection is identical without it — its filtering is redundant. The single highest-value change on the board |
 | **R3** | 100 kΩ → **51 kΩ** (G ≈ 3) | Detects 100 mV pulses at the stock threshold; keeps headroom |
-| **C4** | 330 pF → **47 pF** (C0G) | Moves the in-band low-pass corner from ~3 kHz to ~20 kHz; preserves pulse fidelity. Safe *once C5 is reduced*; never populate below 47 pF with stock C5, and never leave it off |
+| **C4** | 330 pF → **47 pF** (C0G) | Moves the in-band low-pass corner from ~3 kHz to ~20 kHz; preserves pulse fidelity. Safe *once C5 is removed/reduced*; never populate below 47 pF with stock C5, and never leave it off |
 | C2, C3 | keep 4.7 nF (or 2.2 nF if drift dominates in practice) | 2.2 nF halves LF bleed-through for ~6% peak loss |
-| R5, R9, RV1 | keep | Verified correct as-is |
+| R5, R9, RV1 | keep | Verified correct as-is; R9 is load-bearing for the R5/R9 hysteresis divider (R9 = 10 kΩ also fine — widens the band to ~33 mV) |
 
-Use C0G/NP0 dielectric for C4 and C5 — X7R at these small values varies
-with bias and temperature, and C4 sits at a stability boundary.
+Use C0G/NP0 dielectric for C4 (and C5, if populated) — X7R at these small
+values varies with bias and temperature, and C4 sits at a stability
+boundary.
 
 ### Tier 1 — PCB hacks worth doing on existing boards
 
 - **Series isolation resistor between U6 output and C5** (~100–330 Ω).
   The textbook fix for capacitive loading: it damps the resonance for
   *any* C5. Hack: lift C5's ELEC_OUT pad and bridge with an 0402
-  resistor stacked on end. Do this if a board still misbehaves after the
-  C5 swap, or if you want to keep C5 = 2.2 nF for some reason.
+  resistor stacked on end. Only relevant if a cap is populated in the C5
+  position at all (with C5 removed — the current recommendation — there
+  is nothing to isolate). With R9 ≥ 10 kΩ downstream, the divider loss
+  at COMP_IN is ≤ 3%.
 - **Chloride the electrodes (Ag/AgCl).** Removes the dominant drift
   failure mode for the cost of a bleach dip or anodizing in KCl. Note
   the wearable caveat: thin AgCl layers deplete under sustained bias —

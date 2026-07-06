@@ -11,8 +11,9 @@ COMPARATOR_NETWORK_STAGES = frozenset({"02_frontend", "03_detector"})
 class ComparatorNetworkParams:
     """Output filter values as SPICE literals (KiCad EOD_Detector_v3-1 defaults)."""
 
-    c_out: str = "470p"
-    """Output coupling cap between VREF and ELEC_OUT (board: C5)."""
+    c_out: str = "1f"
+    """Shunt cap VREF–ELEC_OUT (board: C5). Default 1 fF = removed, per the
+    bench-confirmed oscillation finding (C4_STABILITY.md)."""
 
     r_comp: str = "4.7k"
     """Series resistor from ELEC_OUT to COMP_IN (board: R9)."""

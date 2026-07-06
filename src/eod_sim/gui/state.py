@@ -19,9 +19,11 @@ ComponentDefaultsId = Literal["detector_v3", "detector_v3_no_c4", "ideal_v3"]
 GUI_TUNING_STAGES = ("02_frontend", "03_detector")
 
 # Sim-derived recommended values (README + C4_STABILITY.md).
+# C5 is removed per the bench-confirmed oscillation finding; 1 fF is
+# effectively an open (same convention as NO_C4_DIFF).
 RECOMMENDED_GAIN = 3.0
 RECOMMENDED_C_DIFF = "47p"
-RECOMMENDED_C_OUT = "470p"
+RECOMMENDED_C_OUT = "1f"
 
 # KiCad EOD_Detector_v3-1 stock (R3 = 100k → G = 2).
 DETECTOR_V3_GAIN = 2.0
