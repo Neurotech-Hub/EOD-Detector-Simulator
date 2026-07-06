@@ -274,6 +274,7 @@ def _control_block() -> html.Div:
                 options=[
                     {"label": "Rounded", "value": "rounded"},
                     {"label": "Square", "value": "square"},
+                    {"label": "Recorded", "value": "recorded"},
                 ],
                 value="rounded",
                 clearable=False,

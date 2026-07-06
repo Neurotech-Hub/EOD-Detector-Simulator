@@ -140,6 +140,27 @@ def test_rounded_pulse_smooth_onset():
     assert vin_sq[onset_idx] == pytest.approx(1e-3, rel=1e-3)
 
 
+def test_recorded_pulse_peak_and_asymmetry():
+    cfg = EODPulseConfig(
+        pulse_shape="recorded",
+        pulse_mv=300.0,
+        num_pulses=1,
+        start_ms=0.0,
+        duration_ms=2.0,
+        sample_us=1.0,
+    )
+    _, vp, vn, _ = generate_eod_pulse_train(cfg)
+    vin = vp - vn
+    tpl = cfg.recorded_template()
+    pos_ratio = float(np.max(tpl.shape))
+    neg_ratio = float(np.min(tpl.shape))
+
+    assert vin.max() == pytest.approx(300e-3 * pos_ratio, rel=0.01)
+    assert vin.min() == pytest.approx(300e-3 * neg_ratio, rel=0.01)
+    assert abs(neg_ratio) > abs(pos_ratio)
+    assert cfg.pulse_duration_s() == pytest.approx(200e-6, rel=0.05)
+
+
 def test_lf_offset_disabled_unchanged():
     cfg = EODPulseConfig(
         pulse_mv=2.0,

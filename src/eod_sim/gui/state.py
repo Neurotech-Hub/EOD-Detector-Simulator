@@ -13,7 +13,7 @@ from eod_sim.stages.registry import Stage, get_stage
 from eod_sim.waveforms import format_rg_spice, gain_to_rg, isi_ms_from_khz
 
 ViewMode = Literal["overview", "pulse"]
-PulseShape = Literal["square", "rounded"]
+PulseShape = Literal["square", "rounded", "recorded"]
 ComponentDefaultsId = Literal["detector_v3", "detector_v3_no_c4", "ideal_v3"]
 
 GUI_TUNING_STAGES = ("02_frontend", "03_detector")

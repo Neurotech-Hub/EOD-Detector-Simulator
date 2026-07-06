@@ -14,6 +14,8 @@ from eod_sim.waveforms import EODPulseConfig, default_sample_us, format_timestep
 def test_default_sample_us():
     assert default_sample_us("rounded") == 1.0
     assert default_sample_us("square") == 10.0
+    recorded_us = default_sample_us("recorded")
+    assert 5.0 <= recorded_us <= 5.2
 
 
 def test_format_timestep_spice():

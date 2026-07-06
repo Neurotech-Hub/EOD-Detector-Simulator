@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pulse-mv", type=float, default=1.0, help="Peak diff pulse (mV)")
     parser.add_argument(
         "--waveform",
-        choices=["square", "rounded"],
+        choices=["square", "rounded", "recorded"],
         default="square",
         help="EOD pulse shape (default: square for regression tests)",
     )
@@ -63,7 +63,12 @@ def parse_args() -> argparse.Namespace:
         "--sample-us",
         type=float,
         default=None,
-        help="Waveform + .tran step size (µs). Default: 1 for rounded, 10 for square.",
+        help="Waveform + .tran step size (µs). Default: 1 rounded, ~5 recorded, 10 square.",
+    )
+    parser.add_argument(
+        "--recorded-source",
+        default=None,
+        help="Bundled recorded waveform id when --waveform recorded (default: eod_row_02)",
     )
     parser.add_argument(
         "--pulse-index",
@@ -247,6 +252,14 @@ def main() -> int:
         print(f"Waveform: {args.waveform}", end="")
         if args.waveform == "rounded":
             print(f"  ({args.pulse_width_us:.0f} µs biphasic width)")
+        elif args.waveform == "recorded":
+            from eod_sim.recorded_pulse import get_recorded_template
+
+            tpl = get_recorded_template(args.recorded_source or "eod_row_02")
+            print(
+                f"  (recorded {tpl.source_id}, {tpl.duration_us:.0f} µs, "
+                f"native peak {tpl.raw_peak_mv:.0f} mV)"
+            )
         else:
             print()
 
@@ -279,6 +292,7 @@ def main() -> int:
         gain=gain,
         pulse_mv=args.pulse_mv,
         pulse_shape=args.waveform,
+        recorded_source=args.recorded_source,
         pulse_width_us=args.pulse_width_us,
         isi_ms=args.isi_ms,
         num_pulses=args.num_pulses,

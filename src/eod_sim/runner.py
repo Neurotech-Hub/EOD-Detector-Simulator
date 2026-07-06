@@ -35,6 +35,7 @@ class RunConfig:
     gain: float = 100.0
     pulse_mv: float = 1.0
     pulse_shape: str = "square"
+    recorded_source: str | None = None
     pulse_width_us: float = 200.0
     isi_ms: float = 20.0
     num_pulses: int = 4
@@ -150,6 +151,7 @@ def run_simulation(
         wf_config = EODPulseConfig(
             pulse_mv=config.pulse_mv,
             pulse_shape=config.pulse_shape,
+            recorded_source=config.recorded_source,
             pulse_width_us=config.pulse_width_us,
             isi_ms=config.isi_ms,
             num_pulses=config.num_pulses,

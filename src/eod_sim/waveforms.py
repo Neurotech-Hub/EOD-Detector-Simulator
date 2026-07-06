@@ -8,7 +8,9 @@ from typing import Literal
 
 import numpy as np
 
-PulseShape = Literal["square", "rounded"]
+from eod_sim.recorded_pulse import DEFAULT_RECORDED_ID, RecordedPulseTemplate, get_recorded_template
+
+PulseShape = Literal["square", "rounded", "recorded"]
 DriveMode = Literal["diff_inputs", "electrodes"]
 
 
@@ -31,7 +33,10 @@ class EODPulseConfig:
     """Peak differential amplitude in millivolts."""
 
     pulse_shape: PulseShape = "square"
-    """Pulse envelope: square (ideal) or rounded (smooth lobes)."""
+    """Pulse envelope: square (ideal), rounded (smooth lobes), or recorded (CSV)."""
+
+    recorded_source: str | None = None
+    """Bundled recorded waveform id when ``pulse_shape='recorded'`` (default: eod_row_02)."""
 
     pulse_width_us: float = 200.0
     """Total biphasic pulse width in microseconds (both lobes)."""
@@ -75,10 +80,16 @@ class EODPulseConfig:
     lf_offset_seed: int | None = None
     """Optional RNG seed; None draws fresh f and phase each simulation."""
 
+    def recorded_template(self) -> RecordedPulseTemplate:
+        """Resolved recorded pulse template (cached by source id)."""
+        return get_recorded_template(self.recorded_source or DEFAULT_RECORDED_ID)
+
     def lobe_duration_s(self) -> float:
         """Duration of one lobe (positive or negative) in seconds."""
         if self.pulse_shape == "square":
             return self.phase_ms * 1e-3
+        if self.pulse_shape == "recorded":
+            return self.recorded_template().duration_s / 2
         return (self.pulse_width_us * 1e-6) / 2
 
     def pulse_duration_s(self) -> float:
@@ -121,8 +132,12 @@ def format_duration_spice(duration_ms: float) -> str:
 
 
 def default_sample_us(pulse_shape: PulseShape) -> float:
-    """Default waveform/sample interval: finer for short rounded pulses."""
-    return 1.0 if pulse_shape == "rounded" else 10.0
+    """Default waveform/sample interval: finer for short rounded/recorded pulses."""
+    if pulse_shape == "rounded":
+        return 1.0
+    if pulse_shape == "recorded":
+        return get_recorded_template().native_sample_us
+    return 10.0
 
 
 def isi_ms_from_khz(pulse_rate_khz: float) -> float:
@@ -147,6 +162,21 @@ def _single_pulse_square(t: np.ndarray, t0: float, amp: float, lobe_s: float) ->
     neg_mask = (t_rel >= lobe_s) & (t_rel < 2 * lobe_s)
     vin[pos_mask] = amp
     vin[neg_mask] = -amp
+    return vin
+
+
+def _single_pulse_recorded(
+    t: np.ndarray,
+    t0: float,
+    amp: float,
+    template: RecordedPulseTemplate,
+) -> np.ndarray:
+    """Recorded differential pulse from a normalized CSV template."""
+    vin = np.zeros_like(t)
+    t_rel = t - t0
+    in_pulse = (t_rel >= 0.0) & (t_rel <= template.duration_s)
+    if np.any(in_pulse):
+        vin[in_pulse] = amp * np.interp(t_rel[in_pulse], template.time_s, template.shape)
     return vin
 
 
@@ -180,6 +210,8 @@ def single_pulse_diff(
         return _single_pulse_square(t, t0, amp, lobe_s)
     if cfg.pulse_shape == "rounded":
         return _single_pulse_rounded(t, t0, amp, lobe_s)
+    if cfg.pulse_shape == "recorded":
+        return _single_pulse_recorded(t, t0, amp, cfg.recorded_template())
     raise ValueError(f"Unknown pulse shape: {cfg.pulse_shape}")
 
 
