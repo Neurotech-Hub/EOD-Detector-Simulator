@@ -1,0 +1,32 @@
+* Stage 03 — full detector (TI INA333 + behavioral MCP6561 equivalent)
+* Stage: 03_detector
+
+.include "../../../../circuits/stages/includes/power.inc"
+.include "../../../../circuits/stages/includes/eod_passives.inc"
+.include "../../../../circuits/stages/includes/eod_stimulus.inc"
+.include "../../../../circuits/stages/includes/eod_ina333_ti.inc"
+.include "../../../../circuits/stages/includes/eod_output_filter.inc"
+.include "../../../../circuits/stages/includes/eod_comparator_behavioral.inc"
+.include "../../../../circuits/stages/includes/sim_ti_transient.inc"
+
+.param VDD=3.3
+.param VREF=1.65
+.param VTHRESH=1.85
+.param C_COUPLE=4.7n
+.param R_SERIES=100k
+.param R_VREF=10Meg
+.param R_DIFF=1Meg
+.param C_DIFF=47p
+.param C_OUT=2.2n
+.param R_COMP=10k
+.param R_HYST=1Meg
+.param R_ELEC_A=1m
+.param R_ELEC_B=1m
+.param RGVAL=50.0000k
+.param TSTEP=1u
+.param TSTOP=20m
+
+.tran {TSTEP} {TSTOP} 0 {TMAX}
+.save v(src_a) v(src_b) v(elec_a) v(elec_b) v(ina_p) v(ina_n) v(elec_out) v(comp_in) v(trigger) v(thresh) v(vref)
+
+.end
